@@ -78,6 +78,7 @@ Manufacturer-specific discovery, capabilities, limits, status normalization, fil
   - fixed-printer jobs retained for backward compatibility.
 - v0.11.0 regression suite: **100 passing tests, 0 failures**, including GitHub Actions verification of the release patch.
 - **v0.11.1 FlashForge nozzle designation:** persistent per-printer controller nozzle diameter, normalized into FlashForge tool status and enforced by file-centric automatic queue compatibility; explicit nozzle matches can run unattended and mismatches are blocked.
+- v0.11.1 regression suite: **105 passing tests, 0 failures**, including GitHub Actions verification.
 
 ## Current task
 
@@ -87,7 +88,7 @@ Validation should confirm staging from the browser, live compatibility reasons, 
 
 ## Next steps
 
-1. Deploy/run v0.11.0 and queue a simple known-good single-tool G-code using **+ Queue file**.
+1. Deploy/run v0.11.1 and queue a simple known-good single-tool G-code using **+ Queue file**.
 2. Verify the UI lists eligible and blocked printers with accurate reasons before assignment.
 3. Test bed-clearance blocking by leaving one otherwise-compatible printer uncleared and confirming another eligible printer is chosen.
 4. Validate U1 material/colour/nozzle mapping with a known multi-tool file before relying on unattended multi-tool scheduling.
