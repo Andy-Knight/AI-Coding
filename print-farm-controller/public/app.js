@@ -382,6 +382,7 @@ function productionBatchMarkup(batch, { history = false } = {}) {
   const completed = Number(batch.completed || 0);
   const active = Number(batch.active || 0);
   const remaining = Number(batch.remaining || 0);
+  const cancelable = Number(batch.cancelable || remaining);
   const failed = Number(batch.failed || 0);
   const cancelled = Number(batch.cancelled || 0);
   const progress = Math.max(0, Math.min(100, Math.round((completed / quantity) * 100)));
@@ -402,7 +403,7 @@ function productionBatchMarkup(batch, { history = false } = {}) {
       <button type="button" class="secondary" data-production-action="${batch.paused ? 'resume' : 'pause'}" data-production-batch="${escapeHtml(batch.id)}">${batch.paused ? 'Resume production' : 'Pause production'}</button>
       <label class="production-quantity-control">Quantity <input type="number" min="1" max="999" step="1" value="${quantity}" data-production-quantity-input="${escapeHtml(batch.id)}"></label>
       <button type="button" class="secondary" data-production-quantity="${escapeHtml(batch.id)}">Update quantity</button>
-      ${remaining ? `<button type="button" class="danger" data-production-action="cancel" data-production-batch="${escapeHtml(batch.id)}">Cancel remaining</button>` : ''}
+      ${cancelable ? `<button type="button" class="danger" data-production-action="cancel" data-production-batch="${escapeHtml(batch.id)}">Cancel remaining</button>` : ''}
     </div>` : '';
   return `<article class="queue-job production-batch${batch.paused ? ' production-paused' : ''}" data-production-card="${escapeHtml(batch.id)}">
     <div class="queue-job-main">

@@ -595,3 +595,84 @@ test('clear history retains completed production runs while sibling copies are s
   assert.equal(service.getSnapshot().productionBatches[0].queued, 1);
   service.stop();
 });
+
+
+test('pausing a production batch during staged upload prevents that copy from starting until resumed', async () => {
+  const fleetState = new FakeFleetState([{ id:'p1', name:'Printer', online:true, status:{ status:'idle', fileName:null, tools:[{ index:0, filament:{} }] } }]);
+  const store = memoryStore();
+  const staged = {
+    id:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', fileName:'paused-batch.gcode', filePath:'/staged/paused-batch.gcode', size:10, sha256:'f'.repeat(64), stagedAt:new Date().toISOString(),
+    requirements:{ requiredTools:[0], toolCount:1, usageReliable:true, logicalTools:[{ index:0 }], materialMetadata:{ metadataAvailable:false, materials:[] } }
+  };
+  let releaseUpload;
+  const uploadGate = new Promise((resolve) => { releaseUpload = resolve; });
+  let uploaded = false;
+  let starts = 0;
+  const service = new PrintQueueService({
+    fleetState,
+    chamberPreheat:{ isActive:() => false, stop:async () => {} },
+    getPrinterFn:async () => ({ id:'p1', name:'Printer' }),
+    adapterResolver:() => ({
+      capabilities:{ fileUpload:true, localFiles:true, printLocalFile:true }, limits:{ toolCount:1 }, uploadExtensions:['.gcode'],
+      getStatus:async () => fleetState.getPrinterState('p1').status,
+      verifyFile:async () => ({ verified:uploaded, source:'test' }),
+      uploadFile:async () => { await uploadGate; uploaded = true; },
+      printLocalFile:async () => { starts++; }
+    }),
+    loadJobsFn:store.load,
+    saveJobsFn:store.save,
+    getQueueFileFn:async () => staged,
+    pruneQueueFilesFn:async () => 0,
+    saveFileMaterialMetadataFn:async () => {}
+  });
+  await service.start();
+  const first = await service.add({ assignmentMode:'automatic', stagedFileId:staged.id, quantity:2 });
+  await waitFor(() => service.getProductionJobs(first.productionBatchId).some((job) => job.status === 'uploading'));
+  await service.pauseProduction(first.productionBatchId);
+  releaseUpload();
+  await waitFor(() => service.getProductionJobs(first.productionBatchId).every((job) => job.status === 'queued'));
+  assert.equal(starts, 0);
+  assert.equal(service.getSnapshot().productionBatches[0].paused, true);
+  await service.resumeProduction(first.productionBatchId);
+  await waitFor(() => starts === 1);
+  service.stop();
+});
+
+test('cancel remaining catches a production copy already uploading without cancelling active prints', async () => {
+  const fleetState = new FakeFleetState([{ id:'p1', name:'Printer', online:true, status:{ status:'idle', fileName:null, tools:[{ index:0, filament:{} }] } }]);
+  const store = memoryStore();
+  const staged = {
+    id:'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', fileName:'cancel-batch.gcode', filePath:'/staged/cancel-batch.gcode', size:10, sha256:'1'.repeat(64), stagedAt:new Date().toISOString(),
+    requirements:{ requiredTools:[0], toolCount:1, usageReliable:true, logicalTools:[{ index:0 }], materialMetadata:{ metadataAvailable:false, materials:[] } }
+  };
+  let releaseUpload;
+  const uploadGate = new Promise((resolve) => { releaseUpload = resolve; });
+  let starts = 0;
+  const service = new PrintQueueService({
+    fleetState,
+    chamberPreheat:{ isActive:() => false, stop:async () => {} },
+    getPrinterFn:async () => ({ id:'p1', name:'Printer' }),
+    adapterResolver:() => ({
+      capabilities:{ fileUpload:true, localFiles:true, printLocalFile:true }, limits:{ toolCount:1 }, uploadExtensions:['.gcode'],
+      getStatus:async () => fleetState.getPrinterState('p1').status,
+      verifyFile:async () => ({ verified:false, source:'test' }),
+      uploadFile:async () => { await uploadGate; },
+      printLocalFile:async () => { starts++; }
+    }),
+    loadJobsFn:store.load,
+    saveJobsFn:store.save,
+    getQueueFileFn:async () => staged,
+    pruneQueueFilesFn:async () => 0,
+    saveFileMaterialMetadataFn:async () => {}
+  });
+  await service.start();
+  const first = await service.add({ assignmentMode:'automatic', stagedFileId:staged.id, quantity:2 });
+  await waitFor(() => service.getProductionJobs(first.productionBatchId).some((job) => job.status === 'uploading'));
+  const result = await service.cancelProduction(first.productionBatchId);
+  assert.equal(result.cancelled, 2);
+  releaseUpload();
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.equal(starts, 0);
+  assert.ok(service.getProductionJobs(first.productionBatchId).every((job) => job.status === 'cancelled'));
+  service.stop();
+});

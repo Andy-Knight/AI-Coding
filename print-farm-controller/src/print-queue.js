@@ -276,6 +276,7 @@ export class PrintQueueService {
       const failed = runs.filter((job) => job.status === 'failed').length;
       const cancelled = runs.filter((job) => job.status === 'cancelled').length;
       const active = runs.filter((job) => ACTIVE_QUEUE_STATES.has(job.status)).length;
+      const cancelable = runs.filter((job) => ['queued', 'needs_review', 'uploading', 'preflight'].includes(job.status)).length;
       const quantity = Math.max(runs.length, ...runs.map((job) => Number(job.productionQuantity || 0)));
       const finished = runs.every((job) => TERMINAL_STATES.has(job.status));
       const paused = !finished && runs.some((job) => job.productionPaused === true && !TERMINAL_STATES.has(job.status));
@@ -290,6 +291,7 @@ export class PrintQueueService {
         failed,
         cancelled,
         remaining: queued + needsReview,
+        cancelable,
         paused,
         finished,
         stagedFile: runs[0]?.stagedFile ? { ...runs[0].stagedFile } : null,
@@ -347,7 +349,7 @@ export class PrintQueueService {
     const jobs = this.getProductionJobs(batchId);
     let cancelled = 0;
     for (const job of jobs) {
-      if (!['queued', 'needs_review'].includes(job.status)) continue;
+      if (!['queued', 'needs_review', 'uploading', 'preflight'].includes(job.status)) continue;
       this.markTerminal(job, 'cancelled', null, { requireBedClearance:false });
       job.productionPaused = false;
       cancelled++;
@@ -362,7 +364,7 @@ export class PrintQueueService {
     let jobs = this.getProductionJobs(batchId);
     const nonRemovable = jobs.filter((job) => !['queued', 'needs_review'].includes(job.status)).length;
     if (target < nonRemovable) {
-      throw new Error(`Production quantity cannot be below ${nonRemovable} because those copies have already started or finished`);
+      throw new Error(`Production quantity cannot be below ${nonRemovable} because those copies are already preparing, started, or finished`);
     }
 
     if (target < jobs.length) {
@@ -839,6 +841,11 @@ export class PrintQueueService {
       await this.persistAndNotify();
       await this.ensureStagedFileAvailable(job, printer, adapter, { ...state, status:freshStatus });
       if (TERMINAL_STATES.has(job.status)) return;
+      if (job.productionPaused === true) {
+        this.resetAutomaticAssignment(job);
+        await this.persistAndNotify();
+        return;
+      }
 
       job.status = 'preflight';
       job.updatedAt = nowIso();
@@ -868,10 +875,20 @@ export class PrintQueueService {
         return;
       }
       job.toolSnapshot = adapter.capabilities?.printToolMapping ? buildToolSnapshot({ status:finalStatus }, job.options.toolMap) : [];
+      if (job.productionPaused === true) {
+        this.resetAutomaticAssignment(job);
+        await this.persistAndNotify();
+        return;
+      }
       if (this.chamberPreheat.isActive(printer.id)) {
         await this.chamberPreheat.stop(printer.id, { reason:'queued-print-started', turnOff:false });
       }
       if (TERMINAL_STATES.has(job.status)) return;
+      if (job.productionPaused === true) {
+        this.resetAutomaticAssignment(job);
+        await this.persistAndNotify();
+        return;
+      }
       job.status = 'starting';
       job.startRequestedAt = nowIso();
       job.updatedAt = nowIso();
@@ -879,6 +896,15 @@ export class PrintQueueService {
       await adapter.printLocalFile(job.fileName, sanitizeOptions(job.options));
       await this.fleetState.refreshNow(printer.id).catch(() => {});
     } catch (error) {
+      if (TERMINAL_STATES.has(job.status)) {
+        await this.persistAndNotify();
+        return;
+      }
+      if (job.productionPaused === true) {
+        this.resetAutomaticAssignment(job);
+        await this.persistAndNotify();
+        return;
+      }
       if (job.status === 'starting') {
         this.markTerminal(job, 'failed', error.message || 'Automatic queued print failed to start', { requireBedClearance:true });
       } else {
