@@ -50,6 +50,7 @@ Manufacturer-specific discovery, capabilities, limits, status normalization, fil
 - Automatic compatibility returns explicit per-printer reasons and distinguishes **Eligible**, **Waiting**, **Needs review**, and **Not compatible**.
 - Required nozzle size must not be guessed. If a printer cannot report an explicitly required nozzle, unattended scheduling requires review rather than assuming a match.
 - U1 logical-to-physical tool mapping is derived from live material/colour/nozzle state and uses constrained matching to avoid greedy mapping errors.
+- Production batches share one staged G-code across multiple run records. Pausing prevents not-yet-started copies from progressing, while active prints continue; cancelling remaining copies also catches copies still in upload/preflight without cancelling prints that have already started.
 - Existing fixed-printer queue behaviour remains backward compatible.
 - Every delivered version increments the application version and updates README/context.
 
@@ -83,6 +84,7 @@ Manufacturer-specific discovery, capabilities, limits, status normalization, fil
 - v0.11.2 regression suite: **106 passing tests, 0 failures**, including an end-to-end legacy-directory migration test in GitHub Actions.
 - **v0.11.3 staged-file cleanup:** clearing print history immediately removes controller-staged queue files that have no remaining queue/history reference; shared/referenced files are retained.
 - **v0.12.0 production quantity / batch printing:** one staged G-code can create 2–999 run records sharing the same file; automatic scheduling can distribute copies across multiple compatible printers concurrently, with batch progress, pause/resume, cancel remaining, and safe quantity adjustment.
+- v0.12.0 regression suite: **113 passing tests, 0 failures**, including concurrent assignment plus pause/cancel race coverage during staged upload.
 
 ## Current task
 
@@ -94,7 +96,7 @@ Manufacturer-specific discovery, capabilities, limits, status normalization, fil
 2. Confirm each completed printer waits for **Bed cleared** before it receives the next copy from the same production batch.
 3. Pause a production batch while copies are active and confirm active prints continue but no new copies start; then resume it.
 4. Increase and decrease the requested quantity while copies are waiting and confirm already-started/finished copies are never removed.
-5. Cancel remaining copies and confirm currently active prints continue while all waiting copies are cancelled.
+5. Cancel remaining copies and confirm currently active prints continue while all waiting/preparing copies are cancelled.
 6. Confirm a printer that already has the exact filename reuses its printer-local copy rather than uploading it again.
 7. After hardware validation, consider queue priority / scheduling policy as the next scheduler milestone.
 
