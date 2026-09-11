@@ -7,7 +7,7 @@
 - Repository: `Andy-Knight/AI-Coding`
 - Project path: `print-farm-controller/`
 - Branch: `main`
-- Current application version: **0.11.1**
+- Current application version: **0.11.2**
 - Runtime: **Node.js 20+**, ES modules, no npm runtime dependencies.
 - GitHub is the authoritative code baseline.
 
@@ -41,7 +41,7 @@ Manufacturer-specific discovery, capabilities, limits, status normalization, fil
 
 - Local-first/LAN-only controller; printer credentials remain backend-side.
 - Multiple manufacturers are supported through adapters rather than manufacturer logic in shared fleet code.
-- Preserve the legacy application-data directory for upgrade compatibility.
+- Default application data uses the manufacturer-neutral `Printer Fleet Controller` directory. v0.11.2 automatically migrates the complete historical `FlashForge Fleet` directory on first startup; custom `DATA_DIR` locations are never moved.
 - Queue/history and controller-staged queue files persist across restarts.
 - A completed/active-failed/cancelled print creates a **bed-clearance interlock**; no later queued job may start on that printer until **Bed cleared** is confirmed.
 - Queue jobs support two assignment modes: **fixed printer** and **Next available compatible printer**.
@@ -79,16 +79,18 @@ Manufacturer-specific discovery, capabilities, limits, status normalization, fil
 - v0.11.0 regression suite: **100 passing tests, 0 failures**, including GitHub Actions verification of the release patch.
 - **v0.11.1 FlashForge nozzle designation:** persistent per-printer controller nozzle diameter, normalized into FlashForge tool status and enforced by file-centric automatic queue compatibility; explicit nozzle matches can run unattended and mismatches are blocked.
 - v0.11.1 regression suite: **105 passing tests, 0 failures**, including GitHub Actions verification.
+- **v0.11.2 neutral data directory:** default controller storage no longer contains `FlashForge`; existing printer registry, queue/history, staged queue files, and metadata migrate automatically to the new manufacturer-neutral directory.
+- v0.11.2 regression suite: **106 passing tests, 0 failures**, including an end-to-end legacy-directory migration test in GitHub Actions.
 
 ## Current task
 
-**v0.11.1 implementation is complete in code and automated tests.** Next priority is real-hardware validation of the **Next available compatible printer** workflow, including the new FlashForge controller nozzle designation, on the user's configured FlashForge and Snapmaker fleet.
+**v0.11.2 implementation is complete in code and automated tests.** Next priority is real-hardware validation of the **Next available compatible printer** workflow and confirmation that the one-time application-data migration preserves the user's configured fleet and queued files.
 
 Validation should confirm staging from the browser, live compatibility reasons, bed-clearance blocking, U1 tool mapping, upload/verification, final preflight, print start, cancellation during preparation, restart behaviour, and fixed-printer queue regression behaviour.
 
 ## Next steps
 
-1. Deploy/run v0.11.1 and queue a simple known-good single-tool G-code using **+ Queue file**.
+1. Deploy/run v0.11.2, confirm the legacy application data migrated to the neutral directory, then queue a simple known-good single-tool G-code using **+ Queue file**.
 2. Verify the UI lists eligible and blocked printers with accurate reasons before assignment.
 3. Test bed-clearance blocking by leaving one otherwise-compatible printer uncleared and confirming another eligible printer is chosen.
 4. Validate U1 material/colour/nozzle mapping with a known multi-tool file before relying on unattended multi-tool scheduling.
