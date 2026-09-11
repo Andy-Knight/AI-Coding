@@ -10,7 +10,8 @@ import {
   removePrinter,
   renamePrinter,
   reorderPrinters,
-  setPrinterMaterialDesignation
+  setPrinterMaterialDesignation,
+  setPrinterNozzleDesignation
 } from './store.js';
 import {
   getPrinterAdapter,
@@ -313,6 +314,22 @@ async function apiRoute(req, res, url) {
     await fleetState.syncRegistry();
     fleetState.refreshNow(id).catch(() => {});
     return json(res, 200, { ok: true, printer: publicPrinter(updated), materialDesignation: updated.adapterConfig?.filamentDesignation || null });
+  }
+
+  if (action === 'nozzle-designation' && (req.method === 'POST' || req.method === 'DELETE')) {
+    if (!adapter.capabilities?.nozzleDesignation) throw new Error('Manual nozzle designation is not supported by this printer');
+    const body = req.method === 'POST' ? await readJson(req) : {};
+    const updated = await setPrinterNozzleDesignation(id, req.method === 'POST' ? body.nozzleDiameter : null);
+    if (!updated) throw new Error('Printer not found');
+    await fleetState.syncRegistry();
+    fleetState.refreshNow(id).catch(() => {});
+    return json(res, 200, {
+      ok: true,
+      printer: publicPrinter(updated),
+      nozzleDiameterDesignation: Number.isFinite(Number(updated.adapterConfig?.nozzleDiameterDesignation))
+        ? Number(updated.adapterConfig.nozzleDiameterDesignation)
+        : null
+    });
   }
 
   if (req.method === 'GET' && action === 'files') {

@@ -1,4 +1,6 @@
-# Printer Fleet Controller v0.11.0
+# Printer Fleet Controller v0.11.1
+
+> v0.11.1 adds a persistent **Controller nozzle designation** for FlashForge 5M-family printers. Set the installed nozzle diameter in Toolhead status so file-centric automatic queue compatibility can safely match staged G-code nozzle requirements instead of holding FlashForge jobs for review when the local API cannot report nozzle size.
 
 > v0.11.0 adds a file-centric **Next available compatible printer** queue. The controller can persistently stage an uploaded G-code file, inspect its tool/material/colour/nozzle requirements, evaluate the live fleet, choose an eligible idle printer with a clear bed, upload and verify the file, run a fresh printer-specific preflight, and then start it. Existing fixed-printer queue jobs remain supported.
 

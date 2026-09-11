@@ -26,6 +26,7 @@ test('FlashForge AD5M adapter exposes the current controller capabilities and li
   assert.equal(adapter.capabilities.chamberPreheat, true);
   assert.equal(adapter.capabilities.materialStatus, true);
   assert.equal(adapter.capabilities.materialDesignation, true);
+  assert.equal(adapter.capabilities.nozzleDesignation, true);
   assert.equal(adapter.limits.bedTemperature.max, 110);
   assert.equal(adapter.limits.nozzleTemperature.max, 265);
 });
@@ -92,6 +93,27 @@ test('a new printer family can register without changing fleet services', () => 
   assert.ok(listAdapterDefinitions().some((definition) => definition.type === 'example-test-adapter'));
 });
 
+
+test('FlashForge manual nozzle designation normalizes the installed nozzle for queue compatibility', async () => {
+  const originalFetch = global.fetch;
+  global.fetch = async () => ({
+    ok:true,
+    async json() { return { code:0, detail:{ status:'ready', rightFilamentType:'PLA' } }; }
+  });
+  try {
+    const adapter = getPrinterAdapter({
+      id:'p-nozzle', adapterType:FLASHFORGE_AD5M_ADAPTER_TYPE, host:'192.168.1.22',
+      serialNumber:'SN', checkCode:'CODE', adapterConfig:{ nozzleDiameterDesignation:0.6 }
+    });
+    const status = await adapter.getStatus();
+    assert.equal(status.tools[0].nozzleDiameter, 0.6);
+    assert.equal(status.tools[0].nozzleDiameterSource, 'manual');
+    assert.equal(status.tools[0].nozzleManuallyAssigned, true);
+    assert.equal(status.tools[0].reportedNozzleDiameter, null);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
 
 test('FlashForge manual material designation overrides display value while retaining printer report', async () => {
   const originalFetch = global.fetch;
