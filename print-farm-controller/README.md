@@ -1,0 +1,226 @@
+# Printer Fleet Controller v0.10.9
+
+> v0.10.9 adds persistent controller-side printer renaming. A custom display name can be changed from **Printer management** without altering the printer IP, serial/pairing details, adapter configuration, or the name reported by the printer itself. The printer-reported name remains visible in Diagnostics.
+
+A local-first 3D printer fleet controller. It runs entirely on your LAN and currently supports:
+
+- **FlashForge Adventurer 5M / 5M Pro** through the local FlashForge HTTP/TCP APIs.
+- **Snapmaker U1** through its local Moonraker/Klipper API.
+
+The application is now named **Printer Fleet Controller**. Existing installations continue to use the legacy application-data directory so upgrades do not lose already configured printers.
+
+## Run
+
+Requires Node.js 20 or later. There are no npm runtime dependencies.
+
+```bash
+npm start
+```
+
+Open:
+
+```text
+http://localhost:4242
+```
+
+Other devices on the same LAN can use:
+
+```text
+http://<controller-computer-ip>:4242
+```
+
+## Supported features
+
+### Fleet
+
+- Automatic local discovery for FlashForge 5M-family printers.
+- Automatic bounded LAN discovery for Snapmaker U1 / compatible U1 Moonraker instances.
+- Add/remove printers and persistently rename the controller display name without changing printer-side identity.
+- Persistent drag-and-drop dashboard ordering.
+- Live backend polling with SSE updates.
+- Online/offline state, progress, layers, temperatures, ETA, and diagnostics.
+- Backend camera proxy with shared MJPEG streams and cached dashboard snapshots.
+- Multi-printer selection and batch actions.
+- Verified multi-printer G-code distribution.
+- Persistent print queue for files already stored on a printer. A queued job waits for its assigned printer to be online, idle, and free of any outstanding build-plate clearance interlock before starting automatically.
+- Queue states: **Queued**, **Needs review**, **Starting**, **Printing**, **Completed**, **Failed**, and **Cancelled**. Queued jobs can be reordered or cancelled, including cancelling the active printer job when appropriate. A **Needs review** job blocks later jobs for the same printer until it is corrected/rechecked or cancelled.
+- Persistent print history with printer, file, timestamps, duration/result, and **Reprint**. Completed or active-failed/cancelled queue jobs create a **Waiting for bed clearance** interlock; **Bed cleared** must be confirmed before the next queued print can start. Outstanding clearance records are retained even when normal history is cleared.
+- Queue/history updates are included with the live fleet stream, so multiple open browsers see the same controller-side scheduler state.
+
+### FlashForge Adventurer 5M / 5M Pro
+
+- Nozzle temperature up to 265 °C.
+- Bed temperature up to 110 °C on later firmware.
+- Cooling/chamber fans and filtration controls.
+- Bed levelling.
+- Full local storage file list via TCP M661, ordered with recently printed files first.
+- File upload and optional verified print start.
+- Pause/resume/cancel.
+- Camera stream.
+- Timed bed-powered chamber preheat with idle-target reassertion.
+- **Toolhead status** shows the filament type reported by the printer (for example PLA/PETG) from the local `/detail` API. You can also set a persistent **Controller material designation** (common presets or a custom material name); while assigned, it becomes the effective material shown by the controller and is marked **Manually assigned**, while the original printer-reported value is retained as secondary information. **Use printer value / Clear designation** removes the override. The designation is stored locally with that printer and does not change FlashForge firmware settings. The 5M API does not provide U1-style RFID colour metadata or a reliable live filament-presence value, so those remain explicitly unavailable.
+- FlashForge file-material preflight compares that manual designation with the filament type declared by G-code metadata (including Orca/FlashForge `right_extruder_material` and slicer `filament_type` comments) when the controller has inspected the file. Equivalent punctuation variants such as `ASA CF`, `ASA-CF`, and `ASA_CF` compare as the same material. A direct **Print** shows an advisory mismatch and permits **Print anyway** by confirmation; a queued or fleet upload/start mismatch is not started unattended and is held/reported for review. The stock 5M local API exposes filenames but not the stored G-code body, so files copied to the printer outside Printer Fleet Controller have an explicitly unknown material requirement until the controller has an inspected copy.
+
+### Snapmaker U1
+
+- Desktop printer details now use two stable columns. Toolhead status and Maintenance stay anchored on the right, so expanding XYZ toolhead calibration only pushes the right-side panels below Maintenance downward instead of rebalancing Toolhead status into the left column. Chamber preheat and Fans use the lower-left space beneath the file area. The dialog remains wider on larger displays and collapses back to one column on narrower screens.
+- Native Moonraker/Klipper LAN connection (default port 7125).
+- Four independent tool temperatures: T0, T1, T2, T3.
+- Active tool shown on the fleet dashboard.
+- Per-tool filament presence from the U1 motion sensors, with independent T0–T3 material cards.
+- Effective U1 per-tool material configuration: manually assigned third-party filament type/subtype/colour is shown from `print_task_config`; Snapmaker RFID metadata remains the automatic source/fallback. Third-party filament still reports physical presence independently.
+- Advisory material preflight before starting a stored U1 file or a selected-fleet upload/start. It summarizes which U1 toolheads currently report filament but does not block jobs because a file may use only a subset of the four tools.
+- U1 multi-tool print setup for stored G-code: the controller reads Moonraker/slicer tool metadata, shows each logical file tool and requested material/colour/nozzle diameter, and lets you map it to physical T0–T3 before starting. Loaded-colour and nozzle-size matches are selected automatically when possible.
+- U1 stored files can also be added to the fleet print queue from the same Print setup UI. Tool mapping, bed levelling, flow calibration, timelapse, replenishment and entanglement preferences are stored with the queued job. Before an unattended queued start, the controller performs a fresh U1 status read and compares the mapped physical heads with their queue-time state; a removed/changed filament assignment or nozzle change fails the queued start instead of silently printing with stale setup. Reprinting a U1 history item reopens current Print setup rather than blindly reusing an old physical-head mapping.
+- The U1 physical-head mapping dropdown uses the same circular filament colour swatches as Toolhead status; raw loaded-filament hex colour codes are kept internal for matching and are not shown in the dropdown labels.
+- Used-tool readiness warnings are scoped to the heads actually selected for the file. Empty heads, material/colour mismatches, and requested-vs-installed nozzle-size mismatches are clearly warned; ambiguous reuse of one physical head for different/unknown file colours is blocked.
+- U1 Print setup includes **Level bed before print**, optional **Flow calibration**, **Timelapse**, **Auto filament replenishment**, and **Filament entanglement detection** with Low/Medium/High sensitivity. These are sent through Snapmaker's native `SET_PRINT_PREFERENCES` immediately before print start; the UI reflects the printer's current preference values when available.
+- Nozzle limits up to 300 °C per U1 firmware configuration.
+- Heated bed control up to 100 °C per U1 firmware configuration.
+- U1 cavity/chamber temperature sensor display.
+- Live physical toolhead readiness for T0–T3: installed nozzle diameter, nozzle volume type (for example standard/high-flow when reported), and the U1's current XYZ extruder offset are read directly from each stock extruder status object.
+- Guided **XYZ toolhead offset calibration** under Maintenance using Snapmaker's stock calibration state machine and touchscreen-style orchestration: Start cleaning sequence → T0 is prepared automatically → confirm each manual clean to cool that head and automatically prepare T1, T2 and T3 in order → remove and verify build plate removed → the U1 automatically probes T0–T3. Each cleaning stage uses the U1's native heat, automatic nozzle-clean and manual-clean position before waiting for the user's confirmation, then cools to the stock 140 °C calibration temperature. The controller does not expose duplicate per-tool Probe buttons because real U1 hardware automatically advances into the T0–T3 XYZ measurements after the plate-removal verification. The U1 automatically saves when all four probes complete; manual Save and Finish/exit controls are also provided for recovery.
+- Print state, progress, layer information (when supplied by the sliced G-code), elapsed time and estimated remaining time.
+- Complete Moonraker G-code file list, with Moonraker job history used to put recently printed files first.
+- Checksum-verified G-code upload.
+- Verified upload before optional print start.
+- Pause/resume/cancel.
+- Stock built-in chamber camera through Snapmaker's native `camera.start_monitor` WebSocket plugin and `/server/files/camera/monitor.jpg`. The controller synthesizes an MJPEG stream from the U1's ~1 fps snapshots; no printer-side webcam bridge or custom firmware is required.
+- Chamber/cavity circulation fan control through the stock `fan_generic cavity_fan` Klipper object.
+- Optional top-cover purifier control: independent 0–100% internal/filter and exhaust speeds, with live percentage/RPM state when reported. If the purifier hardware is not detected, the UI disables those controls.
+- Controller-triggered heated bed mesh calibration through the stock `AUTO_BED_MESH_CALIBRATE` routine. The controller only starts this while the printer is idle and asks for confirmation because the printer heats and moves during calibration.
+- Timed chamber preheat using the bed as the heat source plus Snapmaker's stock `PREHEAT_CHAMBER` purifier mode. The native mode runs the inner purifier circulation fan at 60% and keeps the exhaust off while the controller holds the bed setpoint for the selected duration. The live chamber sensor remains visible during the session.
+- Fleet-wide manual temperature setting is intentionally not offered. Use each printer detail view for nozzle/tool and bed targets. **Heaters off** remains a fleet safety action and explicitly turns off all four U1 tool heaters plus the bed. Chamber-fan and chamber-preheat fleet controls are also supported.
+
+The XYZ toolhead-offset workflow is implemented against Snapmaker's stock firmware commands, regression-tested with a simulated endpoint, and has now been completed successfully on physical U1 hardware through the controller workflow.
+
+## Adding a Snapmaker U1
+
+1. Make sure the U1 and controller computer are on the same local network.
+2. Click **+ Add printer** and **Scan LAN**. The controller scans the local /24 network for Moonraker and only accepts instances exposing the U1 four-tool/Snapmaker object set.
+3. If discovered, click **Use**.
+4. If adding manually, choose **Snapmaker U1 (Moonraker)**, enter the printer IP/hostname, and leave the Moonraker port at `7125` unless your setup exposes Moonraker through another port.
+5. The API key can normally be left blank on the stock trusted LAN. If your Moonraker authorization configuration requires an API key, enter it in the optional field.
+6. Click **Test & add**. The controller queries live Moonraker status before saving the printer.
+
+A useful connectivity check is to browse to the U1's IP address and confirm Fluidd opens. Moonraker itself normally listens on port 7125.
+
+## Snapmaker U1 implementation notes
+
+The U1 adapter queries these Klipper/Moonraker objects:
+
+```text
+webhooks
+print_stats
+virtual_sdcard
+display_status
+heater_bed
+extruder
+extruder1
+extruder2
+extruder3
+toolhead
+temperature_sensor cavity
+fan_generic cavity_fan
+purifier
+filament_detect
+filament_motion_sensor e0_filament
+filament_motion_sensor e1_filament
+filament_motion_sensor e2_filament
+filament_motion_sensor e3_filament
+```
+
+Tool-specific temperature commands use Klipper's `SET_HEATER_TEMPERATURE` command against `extruder`, `extruder1`, `extruder2`, and `extruder3`. The fleet-level generic nozzle command uses the currently active extruder.
+
+Material status is read separately from the core status query so a firmware variant missing an optional material/sensor object cannot take the whole printer offline in the controller. `filament_motion_sensor eN_filament` is authoritative for physical filament presence. `print_task_config` supplies the effective per-tool material assignment (`filament_type`, `filament_sub_type`, `filament_color_rgba`, `filament_vendor`, and `filament_official`), including values manually set on the U1 for third-party filament. `filament_detect.info[N]` remains the RFID source/fallback (`VENDOR`, `MAIN_TYPE`, `SUB_TYPE`, and `ARGB_COLOR`).
+
+U1 chamber fan control uses `SET_FAN_SPEED FAN=cavity_fan SPEED=<0..1>`. Purifier control uses the stock `SET_PURIFIER` command against the `inner` and `exhaust` fan channels. Chamber preheat uses `SET_PURIFIER_MODE MODE=2 ...` to engage Snapmaker's native preheat circulation mode while the controller owns the bed setpoint; normal manual/timeout stops return the purifier to idle with immediate fan shutdown. When a print starts, the controller relinquishes preheat ownership without sending bed-off or forcing the purifier idle, allowing the print workflow to take control. Bed levelling uses the stock `AUTO_BED_MESH_CALIBRATE` macro, which heats and soaks the bed before running `BED_MESH_CALIBRATE` according to Snapmaker's printer configuration. When starting a U1 file from the controller, **Level bed before print** is also available; the controller sets Snapmaker's native `SET_PRINT_PREFERENCES BED_LEVEL=1` (or `0` when unchecked) immediately before the Moonraker print-start request, allowing the U1's stock print sequence to own the pre-print mesh step.
+
+For U1 stored-file launches, the controller first builds a bounded print setup from Moonraker metadata plus G-code header/tail metadata when available. Logical tools used by the file are mapped to physical T0–T3 with `SET_PRINT_EXTRUDER_MAP`, and the selected physical heads are declared with `SET_PRINT_USED_EXTRUDERS`. Immediately before print start it sends `SET_PRINT_PREFERENCES BED_LEVEL=<0|1> FLOW_CALIBRATE=<0|1>`, so Snapmaker's stock print sequence owns both optional calibration steps.
+
+Moonraker file management uses:
+
+```text
+GET  /server/files/list?root=gcodes
+GET  /server/history/list
+POST /server/files/upload
+POST /printer/print/start
+POST /printer/print/pause
+POST /printer/print/resume
+POST /printer/print/cancel
+```
+
+Uploads include a SHA-256 checksum and are verified by re-listing Moonraker storage before the controller optionally starts the print.
+
+The stock U1 camera is not a normal Moonraker webcam. The controller opens a dedicated Moonraker WebSocket and sends `camera.start_monitor` with `domain: "lan"`, then reads the camera frame from `GET /server/files/camera/monitor.jpg`. It repeats the wake command periodically while the camera is in use and converts the resulting ~1 fps JPEG sequence into the same MJPEG proxy interface used by the rest of the fleet.
+
+## Print queue API
+
+The browser uses the controller-side scheduler API:
+
+```text
+GET    /api/queue
+POST   /api/queue
+PUT    /api/queue/order
+DELETE /api/queue/:jobId
+POST   /api/queue/:jobId/reprint
+POST   /api/queue/:jobId/recheck
+DELETE /api/queue/history
+POST   /api/queue/bed-clearance/:printerId
+```
+
+The first v0.10 queue implementation deliberately assigns each job to a specific printer and a file already present in that printer's local storage. FlashForge jobs with known file metadata are rechecked against any controller-side manual filament designation immediately before unattended start; mismatches enter **Needs review** and block later jobs on that printer. After a queued job reaches the printer and then completes, fails, or is cancelled, the controller blocks queue progression for that printer until the build plate is explicitly confirmed clear. Cancelling a job that never started does not create a clearance interlock. Cross-printer compatibility scheduling and automatic “next available compatible printer” assignment are planned as a later layer on top of this persistent queue.
+
+## Application data
+
+Existing configuration remains in the same legacy location as earlier versions so upgrades do not require re-adding printers. The historical `Print Controller/FlashForge Fleet` directory name is intentionally retained for backward compatibility. Queue/history is stored in `print-jobs.json`, and remembered per-printer file material metadata is stored in `file-material-metadata.json` in the same directory.
+
+Windows:
+
+```text
+%LOCALAPPDATA%\Print Controller\FlashForge Fleet\printers.json
+```
+
+macOS:
+
+```text
+~/Library/Application Support/Print Controller/FlashForge Fleet/printers.json
+```
+
+Linux:
+
+```text
+~/.local/share/print-controller/flashforge-fleet/printers.json
+```
+
+The persistent fleet print queue/history is stored beside the printer registry as `print-jobs.json`. It is intentionally separate from `printers.json`, so clearing print history cannot remove configured printers. Queued jobs survive a normal controller restart and resume waiting for their assigned printer; active jobs are reconciled against live printer state when the controller comes back. Build-plate clearance is persisted on the completed queue record, so restarting the controller or clearing ordinary history cannot accidentally release a printer that is still waiting for its bed to be cleared.
+
+You can override the directory with `DATA_DIR`.
+
+Printer secrets such as FlashForge check codes and an optional Moonraker API key are stored backend-side and are not returned in public printer/fleet API responses.
+
+## Architecture
+
+```text
+Browser UI
+   │
+   ▼
+Local Fleet Controller
+   │
+   ├── Printer registry
+   ├── Fleet state / SSE
+   ├── Camera manager
+   ├── Batch control
+   ├── Chamber preheat
+   ├── File distribution
+   └── Print queue / history
+          │
+          ▼
+     PrinterAdapter
+          │
+          ├── flashforge-ad5m
+          └── snapmaker-u1
+                 └── Moonraker / Klipper
+```
+
+The adapter boundary owns discovery, connection validation, capabilities, thermal limits, status normalization, file operations, job control, temperature control, and camera source selection. Core fleet services do not need manufacturer-specific protocol logic.
