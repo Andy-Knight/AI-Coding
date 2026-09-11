@@ -1,0 +1,122 @@
++      <label class="checkbox-label"><input name="levelingBeforePrint" type="checkbox" checked /> Level bed before print when supported</label>
++      <label class="checkbox-label"><input name="flowCalibrationBeforePrint" type="checkbox" /> Flow calibration when supported</label>
++      <div id="queueAddStatus" class="subtle"></div>
++      <div id="queueAddError" class="error hidden"></div>
++      <div class="actions">
++        <button type="button" class="secondary" data-queue-add-close>Cancel</button>
++        <button type="submit" class="primary">Add to queue</button>
++      </div>
++    </form>
++  </dialog>
++
+   <dialog id="batchActionDialog" class="batch-action-dialog">
+     <form id="batchActionForm">
+       <div class="dialog-head">
+diff -ruN base/print-farm-controller/public/styles.css new/print-farm-controller/public/styles.css
+--- base/print-farm-controller/public/styles.css	2026-09-11 10:12:18.000000000 +0000
++++ new/print-farm-controller/public/styles.css	2026-09-11 14:27:40.294233334 +0000
+@@ -332,3 +332,11 @@
+   .file { align-items:flex-start; }
+   .file-actions { flex-direction:column; }
+ }
++
++/* File-centric automatic fleet queue */
++.queue-job-uploading,.queue-job-preflight { border-color:#34516a; }
++.queue-status.uploading,.queue-status.preflight { background:#203a51; color:#a9d7f5; }
++.queue-compatibility { margin-top:7px; padding:7px 9px; border-radius:8px; background:#111b23; color:#8fa3b3; font-size:.7rem; line-height:1.45; }
++.queue-compatibility b { color:#bdcad4; }
++.queue-assignment-card { border:1px solid #2b3945; border-radius:10px; padding:11px 12px; background:#10171d; }
++.queue-assignment-card > div:not(.field-help) { margin-top:4px; color:#b9c8d3; font-size:.86rem; }
+diff -ruN base/print-farm-controller/src/adapters/flashforge-ad5m-adapter.js new/print-farm-controller/src/adapters/flashforge-ad5m-adapter.js
+--- base/print-farm-controller/src/adapters/flashforge-ad5m-adapter.js	2026-09-10 17:38:32.000000000 +0000
++++ new/print-farm-controller/src/adapters/flashforge-ad5m-adapter.js	2026-09-11 14:28:40.474175505 +0000
+@@ -83,6 +83,7 @@
+   get manufacturer() { return 'FlashForge'; }
+   get model() { return this.printer.model || 'Adventurer 5M Pro'; }
+   get capabilities() { return CAPABILITIES; }
++  get uploadExtensions() { return ['.gcode', '.gx', '.3mf']; }
+   get limits() {
+     return Object.freeze({
+       bedTemperature: { min: 0, max: BED_MAX_C },
+diff -ruN base/print-farm-controller/src/adapters/printer-adapter.js new/print-farm-controller/src/adapters/printer-adapter.js
+--- base/print-farm-controller/src/adapters/printer-adapter.js	2026-09-10 17:38:32.000000000 +0000
++++ new/print-farm-controller/src/adapters/printer-adapter.js	2026-09-11 14:28:40.473740762 +0000
+@@ -50,6 +50,7 @@
+   get model() { return this.printer.model || 'Unknown'; }
+   get capabilities() { return DEFAULT_CAPABILITIES; }
+   get limits() { return {}; }
++  get uploadExtensions() { return []; }
+ 
+   unsupported(operation) {
+     throw new UnsupportedPrinterOperationError(operation, this.type);
+diff -ruN base/print-farm-controller/src/adapters/snapmaker-u1-adapter.js new/print-farm-controller/src/adapters/snapmaker-u1-adapter.js
+--- base/print-farm-controller/src/adapters/snapmaker-u1-adapter.js	2026-09-10 13:23:06.000000000 +0000
++++ new/print-farm-controller/src/adapters/snapmaker-u1-adapter.js	2026-09-11 14:28:40.474415026 +0000
+@@ -81,6 +81,7 @@
+   get manufacturer() { return 'Snapmaker'; }
+   get model() { return 'U1'; }
+   get capabilities() { return CAPABILITIES; }
++  get uploadExtensions() { return ['.gcode', '.gco', '.g']; }
+   get limits() {
+     return Object.freeze({
+       bedTemperature: { min: 0, max: SNAPMAKER_U1_BED_MAX_C },
+diff -ruN base/print-farm-controller/src/file-print-requirements.js new/print-farm-controller/src/file-print-requirements.js
+--- base/print-farm-controller/src/file-print-requirements.js	1970-01-01 00:00:00.000000000 +0000
++++ new/print-farm-controller/src/file-print-requirements.js	2026-09-11 14:23:37.679519224 +0000
+@@ -0,0 +1,135 @@
++import { promises as fs } from 'node:fs';
++import path from 'node:path';
++import { parseGcodeMaterialMetadata } from './file-material-metadata.js';
++
++const MAX_CHUNK_BYTES = 256 * 1024;
++
++function clean(value) {
++  const text = String(value ?? '').trim().replace(/^['"]|['"]$/g, '').trim();
++  return text || null;
++}
++
++function splitList(value) {
++  return String(value ?? '')
++    .split(/\s*[;,]\s*/)
++    .map(clean)
++    .filter(Boolean);
++}
++
++function numberList(value) {
++  return splitList(value).map((item) => {
++    const number = Number.parseFloat(item);
++    return Number.isFinite(number) ? number : null;
++  });
++}
++
++function normalizeColor(value) {
++  const text = String(value || '').trim().replace(/^0x/i, '').replace(/^#/, '').toUpperCase();
++  if (/^[0-9A-F]{8}$/.test(text)) return `#${text.slice(2)}`;
++  if (/^[0-9A-F]{6}$/.test(text)) return `#${text}`;
++  return null;
++}
++
++function parseConfig(text) {
++  const values = new Map();
++  for (const line of String(text || '').split(/\r?\n/)) {
++    const match = line.match(/^\s*;?\s*([^:=]+?)\s*[:=]\s*(.*?)\s*$/);
++    if (!match) continue;
++    const key = match[1].trim().toLowerCase();
++    if (!values.has(key)) values.set(key, match[2].trim());
++  }
++  return values;
++}
++
++function first(config, keys) {
++  for (const key of keys) {
++    if (config.has(key)) return config.get(key);
++  }
++  return null;
++}
++
++export function parseGcodePrintRequirements(text = '', { fileName = null } = {}) {
++  const config = parseConfig(text);
++  const materialMetadata = parseGcodeMaterialMetadata(text);
++  const types = splitList(first(config, ['filament_type', 'filament_types']));
++  const colors = splitList(first(config, ['filament_colour', 'filament_color', 'extruder_colour', 'extruder_color'])).map(normalizeColor);
++  const nozzleDiameters = numberList(first(config, ['nozzle_diameter', 'nozzle_diameters']));
