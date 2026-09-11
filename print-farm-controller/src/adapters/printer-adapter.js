@@ -50,6 +50,7 @@ export class PrinterAdapter {
   get model() { return this.printer.model || 'Unknown'; }
   get capabilities() { return DEFAULT_CAPABILITIES; }
   get limits() { return {}; }
+  get uploadExtensions() { return []; }
 
   unsupported(operation) {
     throw new UnsupportedPrinterOperationError(operation, this.type);

@@ -3,11 +3,14 @@ import path from 'node:path';
 import { getPrinter } from './store.js';
 import { getPrinterAdapter } from './adapters/adapter-registry.js';
 import { loadPrintJobs, savePrintJobs } from './queue-store.js';
-import { getPrinterFileMaterialMetadata } from './file-material-store.js';
+import { getPrinterFileMaterialMetadata, savePrinterFileMaterialMetadata } from './file-material-store.js';
+import { getQueueFile, pruneQueueFiles } from './queue-file-store.js';
+import { evaluateQueueCompatibility } from './queue-compatibility.js';
 import { assessMaterialCompatibility } from './file-material-metadata.js';
 
 const TERMINAL_STATES = new Set(['completed', 'failed', 'cancelled']);
 const ACTIVE_PRINTER_STATES = new Set(['printing', 'working', 'building_from_sd', 'pause', 'paused']);
+const ACTIVE_QUEUE_STATES = new Set(['uploading', 'preflight', 'starting', 'printing']);
 const ERROR_PRINTER_STATES = new Set(['error', 'failed']);
 const START_TIMEOUT_MS = 60_000;
 const MIN_ACTIVE_MS = 1_500;
@@ -44,11 +47,22 @@ function matchesFile(status = {}, fileName) {
 }
 
 function publicJob(job) {
+  const stagedFile = job.stagedFile ? {
+    id: job.stagedFile.id,
+    fileName: job.stagedFile.fileName,
+    size: Number(job.stagedFile.size || 0),
+    sha256: job.stagedFile.sha256 || null,
+    stagedAt: job.stagedFile.stagedAt || null
+  } : null;
   return {
     id: job.id,
-    printerId: job.printerId,
-    printerName: job.printerName,
+    assignmentMode: job.assignmentMode === 'automatic' ? 'automatic' : 'fixed',
+    printerId: job.printerId || null,
+    printerName: job.printerName || null,
     fileName: job.fileName,
+    stagedFile,
+    requirements: job.requirements ? structuredClone(job.requirements) : null,
+    compatibility: job.compatibility ? structuredClone(job.compatibility) : null,
     status: job.status,
     options: { ...(job.options || {}) },
     queuedAt: job.queuedAt,
@@ -140,6 +154,9 @@ export class PrintQueueService {
     loadJobsFn = loadPrintJobs,
     saveJobsFn = savePrintJobs,
     getFileMaterialMetadataFn = getPrinterFileMaterialMetadata,
+    saveFileMaterialMetadataFn = savePrinterFileMaterialMetadata,
+    getQueueFileFn = getQueueFile,
+    pruneQueueFilesFn = pruneQueueFiles,
     onChange = null,
     startTimeoutMs = START_TIMEOUT_MS,
     minActiveMs = MIN_ACTIVE_MS
@@ -153,6 +170,9 @@ export class PrintQueueService {
     this.loadJobs = loadJobsFn;
     this.saveJobs = saveJobsFn;
     this.getFileMaterialMetadata = getFileMaterialMetadataFn;
+    this.saveFileMaterialMetadata = saveFileMaterialMetadataFn;
+    this.getQueueFile = getQueueFileFn;
+    this.pruneQueueFiles = pruneQueueFilesFn;
     this.onChange = onChange;
     this.startTimeoutMs = startTimeoutMs;
     this.minActiveMs = minActiveMs;
@@ -165,12 +185,19 @@ export class PrintQueueService {
   }
 
   async start() {
-    this.jobs = (await this.loadJobs()).map((job) => ({
-      ...job,
-      options: sanitizeOptions(job.options || {}),
-      bedClearanceRequired: job.bedClearanceRequired === true,
-      bedClearedAt: job.bedClearedAt || null
-    }));
+    this.jobs = (await this.loadJobs()).map((job) => {
+      const assignmentMode = job.assignmentMode === 'automatic' ? 'automatic' : 'fixed';
+      const interruptedAutomatic = assignmentMode === 'automatic' && ['uploading', 'preflight'].includes(job.status);
+      return {
+        ...job,
+        assignmentMode,
+        ...(interruptedAutomatic ? { status:'queued', printerId:null, printerName:'Next available compatible printer', error:'Controller restarted before automatic assignment completed; job returned to the queue.' } : {}),
+        options: sanitizeOptions(job.options || {}),
+        bedClearanceRequired: job.bedClearanceRequired === true,
+        bedClearedAt: job.bedClearedAt || null
+      };
+    });
+    await this.pruneQueueFiles(this.jobs.map((job) => job.stagedFile?.id).filter(Boolean)).catch(() => {});
     this.unsubscribe = this.fleetState.subscribe(() => this.scheduleReconcile());
     this.notify();
     this.scheduleReconcile();
@@ -190,7 +217,7 @@ export class PrintQueueService {
     return {
       jobs,
       queued: jobs.filter((job) => job.status === 'queued').length,
-      active: jobs.filter((job) => job.status === 'starting' || job.status === 'printing').length,
+      active: jobs.filter((job) => ACTIVE_QUEUE_STATES.has(job.status)).length,
       history: jobs.filter((job) => TERMINAL_STATES.has(job.status)).length,
       needsReview: jobs.filter((job) => job.status === 'needs_review').length,
       awaitingClearance: bedClearance.length,
@@ -239,39 +266,58 @@ export class PrintQueueService {
     return job ? publicJob(job) : null;
   }
 
-  async add({ printerId, fileName, options = {} } = {}) {
-    const printer = await this.getPrinter(String(printerId || ''));
-    if (!printer) throw new Error('Printer not found');
-    const adapter = this.adapterResolver(printer);
-    if (!adapter.capabilities?.printLocalFile) throw new Error('Printing local files is not supported by this printer');
-    const cleanFileName = String(fileName || '').trim();
-    if (!cleanFileName) throw new Error('fileName is required');
+  async add({ printerId, fileName, options = {}, assignmentMode = 'fixed', stagedFileId = null } = {}) {
+    const mode = assignmentMode === 'automatic' ? 'automatic' : 'fixed';
+    let stagedFile = null;
+    if (stagedFileId) stagedFile = await this.getQueueFile(stagedFileId);
+    if (mode === 'automatic' && !stagedFile) throw new Error('Automatic queue jobs require a staged controller file');
 
-    const liveState = this.fleetState.getPrinterState(printer.id);
-    if (adapter.capabilities?.printToolMapping) {
-      if (!liveState?.online || !Array.isArray(liveState.status?.tools) || !liveState.status.tools.length) {
-        throw new Error('Live U1 toolhead status is required before queueing a mapped print');
-      }
-      const requiredLogical = Array.isArray(options.usedLogicalTools) ? options.usedLogicalTools.map(Number).filter(Number.isFinite) : [];
-      for (const logicalIndex of requiredLogical) {
-        if (options.toolMap?.[logicalIndex] === undefined && options.toolMap?.[String(logicalIndex)] === undefined) {
-          throw new Error(`Queued U1 print is missing a physical head mapping for file T${logicalIndex}`);
+    const cleanFileName = String(stagedFile?.fileName || fileName || '').trim();
+    if (!cleanFileName) throw new Error('fileName is required');
+    let printer = null;
+    let adapter = null;
+    let liveState = null;
+    let toolSnapshot = [];
+    let fileMaterial = stagedFile?.requirements?.materialMetadata || null;
+
+    if (mode === 'fixed') {
+      printer = await this.getPrinter(String(printerId || ''));
+      if (!printer) throw new Error('Printer not found');
+      adapter = this.adapterResolver(printer);
+      if (!adapter.capabilities?.printLocalFile) throw new Error('Printing local files is not supported by this printer');
+      liveState = this.fleetState.getPrinterState(printer.id);
+      if (adapter.capabilities?.printToolMapping) {
+        if (!liveState?.online || !Array.isArray(liveState.status?.tools) || !liveState.status.tools.length) {
+          throw new Error('Live U1 toolhead status is required before queueing a mapped print');
+        }
+        const requiredLogical = Array.isArray(options.usedLogicalTools) ? options.usedLogicalTools.map(Number).filter(Number.isFinite) : [];
+        for (const logicalIndex of requiredLogical) {
+          if (options.toolMap?.[logicalIndex] === undefined && options.toolMap?.[String(logicalIndex)] === undefined) {
+            throw new Error(`Queued U1 print is missing a physical head mapping for file T${logicalIndex}`);
+          }
         }
       }
-    }
-    const toolSnapshot = adapter.capabilities?.printToolMapping ? buildToolSnapshot(liveState, options.toolMap) : [];
-    let fileMaterial = null;
-    try {
-      fileMaterial = await this.getFileMaterialMetadata(printer.id, cleanFileName);
-    } catch {
-      fileMaterial = null;
+      toolSnapshot = adapter.capabilities?.printToolMapping ? buildToolSnapshot(liveState, options.toolMap) : [];
+      if (!fileMaterial) {
+        try { fileMaterial = await this.getFileMaterialMetadata(printer.id, cleanFileName); } catch { fileMaterial = null; }
+      }
     }
 
     const job = {
       id: crypto.randomUUID(),
-      printerId: printer.id,
-      printerName: printer.name,
+      assignmentMode: mode,
+      printerId: mode === 'fixed' ? printer.id : null,
+      printerName: mode === 'fixed' ? printer.name : 'Next available compatible printer',
       fileName: cleanFileName,
+      stagedFile: stagedFile ? {
+        id: stagedFile.id,
+        fileName: stagedFile.fileName,
+        size: stagedFile.size,
+        sha256: stagedFile.sha256,
+        stagedAt: stagedFile.stagedAt
+      } : null,
+      requirements: stagedFile?.requirements ? structuredClone(stagedFile.requirements) : null,
+      compatibility: null,
       options: sanitizeOptions(options),
       toolSnapshot,
       fileMaterial,
@@ -296,13 +342,29 @@ export class PrintQueueService {
   async reprint(id) {
     const source = this.jobs.find((job) => job.id === id);
     if (!source) throw new Error('Print history item not found');
-    return this.add({ printerId: source.printerId, fileName: source.fileName, options: source.options });
+    return this.add({
+      assignmentMode: source.assignmentMode || 'fixed',
+      printerId: source.assignmentMode === 'automatic' ? null : source.printerId,
+      fileName: source.fileName,
+      stagedFileId: source.stagedFile?.id || null,
+      options: source.options
+    });
   }
 
   async recheck(id) {
     const job = this.jobs.find((item) => item.id === id);
     if (!job) throw new Error('Queued print not found');
     if (job.status !== 'needs_review') throw new Error('This queued print is not waiting for review');
+    if (job.assignmentMode === 'automatic') {
+      job.status = 'queued';
+      job.printerId = null;
+      job.printerName = 'Next available compatible printer';
+      job.error = null;
+      job.updatedAt = nowIso();
+      await this.persistAndNotify();
+      this.scheduleReconcile();
+      return publicJob(job);
+    }
     const printer = await this.getPrinter(job.printerId);
     if (!printer) throw new Error('Printer not found');
     let metadata = job.fileMaterial || null;
@@ -437,16 +499,26 @@ export class PrintQueueService {
         }
       }
 
-      // One active queue job per printer. A queued job is started only while the
-      // printer reports idle/no active filename; manually-started jobs therefore
-      // naturally block queue progression until they finish.
+      // Automatic jobs are evaluated in global queue order. Compatibility is
+      // hardware/file-centric; readiness adds live state such as busy/offline and
+      // the persistent bed-clearance interlock.
+      for (let index = 0; index < this.jobs.length; index++) {
+        const job = this.jobs[index];
+        if (job.status !== 'queued' || job.assignmentMode !== 'automatic') continue;
+        const evaluation = await this.refreshAutomaticCompatibility(job, fleet, index);
+        changed = evaluation.changed || changed;
+        const candidate = evaluation.results.find((item) => item.ready);
+        if (candidate) this.startAutomaticJob(job, candidate).catch((error) => console.error('Automatic queued print start failed:', error));
+      }
+
+      // Fixed-printer jobs retain the original per-printer queue behaviour.
       for (const state of fleet.values()) {
         if (!state.online || !state.status) continue;
         if (this.startingPrinters.has(state.id)) continue;
         if (this.requiresBedClearance(state.id)) continue;
         if (!printerCanStart(state.status)) continue;
-        if (this.jobs.some((job) => job.printerId === state.id && (job.status === 'starting' || job.status === 'printing'))) continue;
-        const next = this.jobs.find((job) => job.printerId === state.id && (job.status === 'queued' || job.status === 'needs_review'));
+        if (this.jobs.some((job) => job.printerId === state.id && ACTIVE_QUEUE_STATES.has(job.status))) continue;
+        const next = this.jobs.find((job) => job.assignmentMode !== 'automatic' && job.printerId === state.id && (job.status === 'queued' || job.status === 'needs_review'));
         if (next?.status === 'queued') this.startJob(next).catch((error) => console.error('Queued print start failed:', error));
       }
 
@@ -457,6 +529,181 @@ export class PrintQueueService {
         this.pendingReconcile = false;
         this.scheduleReconcile();
       }
+    }
+  }
+
+  async refreshAutomaticCompatibility(job, fleet, jobIndex = this.jobs.indexOf(job)) {
+    const results = [];
+    for (const state of fleet.values()) {
+      const printer = await this.getPrinter(state.id);
+      if (!printer) continue;
+      let adapter;
+      try { adapter = this.adapterResolver(printer); } catch { continue; }
+      const earlierFixedWaiting = this.jobs.slice(0, Math.max(0, jobIndex)).some((other) =>
+        other.assignmentMode !== 'automatic' && other.printerId === state.id && (other.status === 'queued' || other.status === 'needs_review')
+      );
+      const reserved = this.startingPrinters.has(state.id) || earlierFixedWaiting || this.jobs.some((other) =>
+        other.id !== job.id && other.printerId === state.id && ACTIVE_QUEUE_STATES.has(other.status)
+      );
+      results.push(evaluateQueueCompatibility({
+        job,
+        printer,
+        state,
+        adapter,
+        bedClearanceRequired:this.requiresBedClearance(state.id),
+        reserved
+      }));
+    }
+    const summarize = (category) => results.filter((item) => item.category === category).map((item) => ({
+      printerId:item.printerId,
+      printerName:item.printerName,
+      reasons:item.reasons.map((reason) => ({ ...reason })),
+      ...(item.toolMap ? { toolMap:{ ...item.toolMap } } : {})
+    }));
+    const next = {
+      evaluatedAt:nowIso(),
+      ready:summarize('ready'),
+      blocked:summarize('blocked'),
+      needsReview:summarize('needs_review'),
+      incompatible:summarize('incompatible')
+    };
+    const previousComparable = job.compatibility ? { ...job.compatibility, evaluatedAt:null } : null;
+    const nextComparable = { ...next, evaluatedAt:null };
+    const changed = JSON.stringify(previousComparable) !== JSON.stringify(nextComparable);
+    job.compatibility = next;
+    return { results, changed };
+  }
+
+  async ensureStagedFileAvailable(job, printer, adapter, state) {
+    if (!job.stagedFile?.id) return { uploaded:false, verified:true, source:'printer-existing' };
+    const staged = await this.getQueueFile(job.stagedFile.id);
+    let verification = null;
+    try { verification = await adapter.verifyFile(job.fileName); } catch {}
+    if (verification?.verified) return { uploaded:false, verified:true, source:verification.source || 'printer-existing' };
+
+    await adapter.uploadFile(staged.filePath, {
+      fileName:job.fileName,
+      firmwareVersion:state?.status?.firmwareVersion,
+      levelingBeforePrint:job.options?.levelingBeforePrint !== false
+    });
+    verification = await adapter.verifyFile(job.fileName);
+    if (!verification?.verified) throw new Error(verification?.warning || 'Upload completed, but the staged queue file could not be verified on the printer');
+    const materialMetadata = job.requirements?.materialMetadata || staged.requirements?.materialMetadata || null;
+    if (materialMetadata?.metadataAvailable) {
+      await this.saveFileMaterialMetadata(printer.id, job.fileName, materialMetadata).catch(() => {});
+      job.fileMaterial = materialMetadata;
+    }
+    return { uploaded:true, verified:true, source:verification.source || null };
+  }
+
+  resetAutomaticAssignment(job, error = null) {
+    job.status = 'queued';
+    job.printerId = null;
+    job.printerName = 'Next available compatible printer';
+    job.options = { ...sanitizeOptions(job.options), toolMap:null, usedLogicalTools:[] };
+    job.toolSnapshot = [];
+    job.startRequestedAt = null;
+    job.error = error || null;
+    job.updatedAt = nowIso();
+  }
+
+  async startAutomaticJob(job, candidate) {
+    if (!job || job.status !== 'queued' || job.assignmentMode !== 'automatic' || !candidate?.printerId) return;
+    if (this.startingPrinters.has(candidate.printerId)) return;
+    this.startingPrinters.add(candidate.printerId);
+    try {
+      const printer = await this.getPrinter(candidate.printerId);
+      if (!printer) {
+        this.resetAutomaticAssignment(job, 'Selected printer is no longer configured');
+        await this.persistAndNotify();
+        return;
+      }
+      const adapter = this.adapterResolver(printer);
+      const state = this.fleetState.getPrinterState(printer.id);
+      if (!state?.online || !state.status) {
+        this.resetAutomaticAssignment(job, 'Selected printer went offline before assignment');
+        await this.persistAndNotify();
+        return;
+      }
+      const freshStatus = await adapter.getStatus();
+      const freshEvaluation = evaluateQueueCompatibility({
+        job,
+        printer,
+        state:{ ...state, online:true, status:freshStatus },
+        adapter,
+        bedClearanceRequired:this.requiresBedClearance(printer.id),
+        reserved:false
+      });
+      if (!freshEvaluation.ready) {
+        this.resetAutomaticAssignment(job, freshEvaluation.reasons.map((reason) => reason.text).join('; ') || 'Printer is no longer ready');
+        await this.persistAndNotify();
+        return;
+      }
+
+      job.printerId = printer.id;
+      job.printerName = printer.name;
+      job.options = {
+        ...sanitizeOptions(job.options),
+        toolMap:freshEvaluation.toolMap ? { ...freshEvaluation.toolMap } : null,
+        usedLogicalTools:Array.isArray(job.requirements?.requiredTools) ? [...job.requirements.requiredTools] : []
+      };
+      job.status = 'uploading';
+      job.error = null;
+      job.updatedAt = nowIso();
+      await this.persistAndNotify();
+      await this.ensureStagedFileAvailable(job, printer, adapter, { ...state, status:freshStatus });
+      if (TERMINAL_STATES.has(job.status)) return;
+
+      job.status = 'preflight';
+      job.updatedAt = nowIso();
+      await this.persistAndNotify();
+      const finalStatus = await adapter.getStatus();
+      if (TERMINAL_STATES.has(job.status)) return;
+      const finalEvaluation = evaluateQueueCompatibility({
+        job,
+        printer,
+        state:{ ...state, online:true, status:finalStatus },
+        adapter,
+        bedClearanceRequired:this.requiresBedClearance(printer.id),
+        reserved:false
+      });
+      if (!finalEvaluation.ready) {
+        this.resetAutomaticAssignment(job, finalEvaluation.reasons.map((reason) => reason.text).join('; ') || 'Printer failed final preflight');
+        await this.persistAndNotify();
+        return;
+      }
+
+      const materialCheck = assessMaterialCompatibility(printer.adapterConfig?.filamentDesignation, job.fileMaterial || job.requirements?.materialMetadata || {});
+      if (materialCheck.mismatch) {
+        job.status = 'needs_review';
+        job.error = `Needs review: file requires ${materialCheck.requiredMaterial}, but ${printer.name} is manually designated ${materialCheck.designatedMaterial}.`;
+        job.updatedAt = nowIso();
+        await this.persistAndNotify();
+        return;
+      }
+      job.toolSnapshot = adapter.capabilities?.printToolMapping ? buildToolSnapshot({ status:finalStatus }, job.options.toolMap) : [];
+      if (this.chamberPreheat.isActive(printer.id)) {
+        await this.chamberPreheat.stop(printer.id, { reason:'queued-print-started', turnOff:false });
+      }
+      if (TERMINAL_STATES.has(job.status)) return;
+      job.status = 'starting';
+      job.startRequestedAt = nowIso();
+      job.updatedAt = nowIso();
+      await this.persistAndNotify();
+      await adapter.printLocalFile(job.fileName, sanitizeOptions(job.options));
+      await this.fleetState.refreshNow(printer.id).catch(() => {});
+    } catch (error) {
+      if (job.status === 'starting') {
+        this.markTerminal(job, 'failed', error.message || 'Automatic queued print failed to start', { requireBedClearance:true });
+      } else {
+        job.status = 'needs_review';
+        job.error = `${job.printerName || 'Selected printer'}: ${error.message || 'Automatic queue preparation failed'}`;
+        job.updatedAt = nowIso();
+      }
+      await this.persistAndNotify();
+    } finally {
+      this.startingPrinters.delete(candidate.printerId);
+      this.scheduleReconcile();
     }
   }
 
@@ -471,9 +718,26 @@ export class PrintQueueService {
       if (!printer) throw new Error('Printer not found');
       const adapter = this.adapterResolver(printer);
       if (!adapter.capabilities?.printLocalFile) throw new Error('Printing local files is not supported by this printer');
-      const freshStatus = await adapter.getStatus();
+      let freshStatus = await adapter.getStatus();
       if (!printerCanStart(freshStatus)) return;
-      let latestFileMaterial = job.fileMaterial || null;
+      if (job.stagedFile?.id) {
+        job.status = 'uploading';
+        job.updatedAt = nowIso();
+        await this.persistAndNotify();
+        await this.ensureStagedFileAvailable(job, printer, adapter, { ...state, status:freshStatus });
+        if (TERMINAL_STATES.has(job.status)) return;
+        job.status = 'preflight';
+        job.updatedAt = nowIso();
+        await this.persistAndNotify();
+        freshStatus = await adapter.getStatus();
+        if (!printerCanStart(freshStatus)) {
+          job.status = 'queued';
+          job.updatedAt = nowIso();
+          await this.persistAndNotify();
+          return;
+        }
+      }
+      let latestFileMaterial = job.fileMaterial || job.requirements?.materialMetadata || null;
       try {
         latestFileMaterial = await this.getFileMaterialMetadata(job.printerId, job.fileName) || latestFileMaterial;
       } catch {}
@@ -537,6 +801,7 @@ export class PrintQueueService {
     const save = this.saveChain.then(() => this.saveJobs(snapshot));
     this.saveChain = save.catch(() => {});
     await save;
+    await this.pruneQueueFiles(snapshot.map((job) => job.stagedFile?.id).filter(Boolean)).catch(() => {});
     this.notify();
   }
 

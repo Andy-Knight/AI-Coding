@@ -24,6 +24,7 @@ import { ChamberPreheatService } from './chamber-preheat.js';
 import { BatchControlService } from './batch-control.js';
 import { FileDistributionService } from './file-distribution.js';
 import { stageUploadRequest } from './upload-staging.js';
+import { stageQueueFile, removeQueueFile } from './queue-file-store.js';
 import { PrintQueueService } from './print-queue.js';
 import { assessMaterialCompatibility } from './file-material-metadata.js';
 import { getPrinterFileMaterialMetadata, removePrinterFileMaterialMetadata } from './file-material-store.js';
@@ -154,11 +155,29 @@ async function apiRoute(req, res, url) {
     return json(res, 200, printQueue.getSnapshot());
   }
 
+  if (req.method === 'POST' && url.pathname === '/api/queue/stage') {
+    const stagedUpload = await stageUploadRequest(req, req.headers['x-file-name']);
+    try {
+      const stagedFile = await stageQueueFile(stagedUpload.filePath, stagedUpload.fileName);
+      return json(res, 201, { stagedFile });
+    } finally {
+      await stagedUpload.cleanup().catch(() => {});
+    }
+  }
+
+  const stagedQueueFileMatch = url.pathname.match(/^\/api\/queue\/stage\/([^/]+)$/);
+  if (stagedQueueFileMatch && req.method === 'DELETE') {
+    await removeQueueFile(decodeURIComponent(stagedQueueFileMatch[1]));
+    return json(res, 200, { ok:true });
+  }
+
   if (req.method === 'POST' && url.pathname === '/api/queue') {
     const body = await readJson(req);
     const job = await printQueue.add({
+      assignmentMode: body.assignmentMode,
       printerId: body.printerId,
       fileName: body.fileName,
+      stagedFileId: body.stagedFileId,
       options: body.options || {}
     });
     return json(res, 201, { job, queue: printQueue.getSnapshot() });

@@ -92,6 +92,23 @@ test('dashboard exposes persistent print queue and printer file queue actions', 
   assert.match(styles, /\.queue-job/);
 });
 
+
+test('queue UI can stage a file for the next available compatible printer', () => {
+  const html = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
+  const server = fs.readFileSync(new URL('../src/server.js', import.meta.url), 'utf8');
+  const queue = fs.readFileSync(new URL('../src/print-queue.js', import.meta.url), 'utf8');
+  assert.match(html, /id="queueAddFileBtn"/);
+  assert.match(html, /id="queueAddDialog"/);
+  assert.match(html, /Next available compatible printer/);
+  assert.match(app, /stageAutomaticQueueFile/);
+  assert.match(app, /assignmentMode:'automatic'/);
+  assert.match(app, /queueCompatibilityMarkup/);
+  assert.match(server, /\/api\/queue\/stage/);
+  assert.match(queue, /refreshAutomaticCompatibility/);
+  assert.match(queue, /startAutomaticJob/);
+  assert.match(styles, /\.queue-compatibility/);
+});
+
 test('queue UI exposes persistent bed-clearance interlock before automatic progression', () => {
   const html = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
   const server = fs.readFileSync(new URL('../src/server.js', import.meta.url), 'utf8');

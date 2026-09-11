@@ -1,0 +1,92 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { evaluateQueueCompatibility } from '../src/queue-compatibility.js';
+
+const stagedJob = {
+  stagedFile:{ id:'x', requirements:{
+    requiredTools:[0,1], toolCount:2, usageReliable:true,
+    logicalTools:[
+      { index:0, material:'PLA', color:'#FF0000', nozzleDiameter:0.4 },
+      { index:1, material:'PETG', color:'#00FF00', nozzleDiameter:0.6 }
+    ]
+  } }
+};
+
+test('U1 compatibility produces a logical-to-physical mapping from loaded tool state', () => {
+  const result = evaluateQueueCompatibility({
+    job:stagedJob,
+    printer:{ id:'u1', name:'U1-01' },
+    state:{ id:'u1', name:'U1-01', online:true, status:{ status:'idle', fileName:null, tools:[
+      { index:0, nozzleDiameter:0.6, filament:{ present:true, material:'PETG', color:'#00FF00' } },
+      { index:2, nozzleDiameter:0.4, filament:{ present:true, material:'PLA', color:'#FF0000' } }
+    ] } },
+    adapter:{ capabilities:{ fileUpload:true, localFiles:true, printLocalFile:true, printToolMapping:true }, limits:{ toolCount:4 } }
+  });
+  assert.equal(result.category, 'ready');
+  assert.deepEqual(result.toolMap, { '0':2, '1':0 });
+});
+
+test('single-tool printer is incompatible with a two-tool file', () => {
+  const result = evaluateQueueCompatibility({
+    job:stagedJob,
+    printer:{ id:'ff', name:'AD5M' },
+    state:{ id:'ff', name:'AD5M', online:true, status:{ status:'idle', tools:[{ index:0, filament:{ material:'PLA' } }] } },
+    adapter:{ capabilities:{ fileUpload:true, localFiles:true, printLocalFile:true, printToolMapping:false }, limits:{} }
+  });
+  assert.equal(result.category, 'incompatible');
+  assert.match(result.reasons[0].text, /requires 2 tools/);
+});
+
+test('compatible printer can be temporarily blocked by bed clearance', () => {
+  const result = evaluateQueueCompatibility({
+    job:{ stagedFile:{ requirements:{ requiredTools:[0], toolCount:1, usageReliable:true, logicalTools:[{ index:0, material:'PLA' }] } } },
+    printer:{ id:'ff', name:'AD5M' },
+    state:{ id:'ff', name:'AD5M', online:true, status:{ status:'idle', tools:[{ index:0, filament:{ material:'PLA' } }] } },
+    adapter:{ capabilities:{ fileUpload:true, localFiles:true, printLocalFile:true }, limits:{} },
+    bedClearanceRequired:true
+  });
+  assert.equal(result.category, 'blocked');
+  assert.ok(result.reasons.some((reason) => reason.code === 'bed_not_cleared'));
+});
+
+test('automatic compatibility does not guess a required nozzle size when printer cannot report it', () => {
+  const result = evaluateQueueCompatibility({
+    job:{ fileName:'part.gcode', stagedFile:{ requirements:{ requiredTools:[0], toolCount:1, usageReliable:true, logicalTools:[{ index:0, material:'PLA', nozzleDiameter:0.6 }] } } },
+    printer:{ id:'ff', name:'AD5M' },
+    state:{ id:'ff', name:'AD5M', online:true, status:{ status:'idle', tools:[{ index:0, filament:{ material:'PLA' } }] } },
+    adapter:{ capabilities:{ fileUpload:true, localFiles:true, printLocalFile:true }, limits:{}, uploadExtensions:['.gcode','.gx','.3mf'] }
+  });
+  assert.equal(result.category, 'needs_review');
+  assert.ok(result.reasons.some((reason) => reason.code === 'nozzle_unknown'));
+});
+
+test('automatic compatibility rejects file types unsupported by a printer adapter', () => {
+  const result = evaluateQueueCompatibility({
+    job:{ fileName:'project.3mf', stagedFile:{ requirements:{ requiredTools:[], toolCount:0, logicalTools:[] } } },
+    printer:{ id:'u1', name:'U1' },
+    state:{ id:'u1', name:'U1', online:true, status:{ status:'idle', tools:[] } },
+    adapter:{ capabilities:{ fileUpload:true, localFiles:true, printLocalFile:true }, limits:{}, uploadExtensions:['.gcode'] }
+  });
+  assert.equal(result.category, 'incompatible');
+  assert.ok(result.reasons.some((reason) => reason.code === 'unsupported_file_type'));
+});
+
+test('tool mapping uses constrained matching instead of greedy physical-head order', () => {
+  const result = evaluateQueueCompatibility({
+    job:{ fileName:'multi.gcode', stagedFile:{ requirements:{
+      requiredTools:[0,1], toolCount:2, usageReliable:true,
+      logicalTools:[
+        { index:0, material:'PLA' },
+        { index:1, material:'PLA', nozzleDiameter:0.6 }
+      ]
+    } } },
+    printer:{ id:'u1', name:'U1' },
+    state:{ id:'u1', name:'U1', online:true, status:{ status:'idle', tools:[
+      { index:0, nozzleDiameter:0.6, filament:{ present:true, material:'PLA' } },
+      { index:1, nozzleDiameter:0.4, filament:{ present:true, material:'PLA' } }
+    ] } },
+    adapter:{ capabilities:{ fileUpload:true, localFiles:true, printLocalFile:true, printToolMapping:true }, limits:{ toolCount:4 }, uploadExtensions:['.gcode'] }
+  });
+  assert.equal(result.category, 'ready');
+  assert.deepEqual(result.toolMap, { '0':1, '1':0 });
+});

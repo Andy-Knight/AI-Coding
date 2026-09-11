@@ -81,6 +81,7 @@ export class SnapmakerU1Adapter extends PrinterAdapter {
   get manufacturer() { return 'Snapmaker'; }
   get model() { return 'U1'; }
   get capabilities() { return CAPABILITIES; }
+  get uploadExtensions() { return ['.gcode', '.gco', '.g']; }
   get limits() {
     return Object.freeze({
       bedTemperature: { min: 0, max: SNAPMAKER_U1_BED_MAX_C },

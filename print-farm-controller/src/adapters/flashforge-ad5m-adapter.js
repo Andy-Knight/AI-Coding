@@ -83,6 +83,7 @@ export class FlashForgeAd5mAdapter extends PrinterAdapter {
   get manufacturer() { return 'FlashForge'; }
   get model() { return this.printer.model || 'Adventurer 5M Pro'; }
   get capabilities() { return CAPABILITIES; }
+  get uploadExtensions() { return ['.gcode', '.gx', '.3mf']; }
   get limits() {
     return Object.freeze({
       bedTemperature: { min: 0, max: BED_MAX_C },

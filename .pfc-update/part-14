@@ -1,1 +1,0 @@
-   const server = fs.readFileSync(new URL('../src/server.js', import.meta.url), 'utf8');

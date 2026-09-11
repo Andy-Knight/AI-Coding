@@ -102,7 +102,10 @@
         <button type="button" class="icon" data-queue-close>×</button>
       </div>
       <section class="queue-section">
-        <div class="queue-section-head"><h3>Active &amp; queued</h3><span class="subtle">Jobs start automatically when their assigned printer is idle and its build plate has been confirmed clear.</span></div>
+        <div class="queue-section-head">
+          <div><h3>Active &amp; queued</h3><span class="subtle">Fixed jobs wait for their assigned printer. Automatic jobs wait for the next compatible idle printer after its build plate has been confirmed clear.</span></div>
+          <button id="queueAddFileBtn" type="button" class="primary">+ Queue file</button>
+        </div>
         <div id="queueActiveList" class="queue-list"></div>
       </section>
       <section class="queue-section queue-history-section">
@@ -110,6 +113,33 @@
         <div id="queueHistoryList" class="queue-list"></div>
       </section>
     </div>
+  </dialog>
+
+  <dialog id="queueAddDialog" class="batch-action-dialog">
+    <form id="queueAddForm">
+      <div class="dialog-head">
+        <div>
+          <div class="eyebrow">FLEET SCHEDULER</div>
+          <h2>Queue file</h2>
+          <div class="subtle">The controller keeps a persistent copy and sends it to the next available compatible printer.</div>
+        </div>
+        <button type="button" class="icon" data-queue-add-close>×</button>
+      </div>
+      <label>G-code file<input id="queueAddFileInput" name="file" type="file" accept=".gcode,.gx,.3mf" required /></label>
+      <div class="queue-assignment-card">
+        <strong>Assignment</strong>
+        <div>Next available compatible printer</div>
+        <div class="field-help">Compatibility considers printer capabilities, required tools, nozzle size, loaded material/colour where known, U1 tool mapping, live idle state and bed clearance.</div>
+      </div>
+      <label class="checkbox-label"><input name="levelingBeforePrint" type="checkbox" checked /> Level bed before print when supported</label>
+      <label class="checkbox-label"><input name="flowCalibrationBeforePrint" type="checkbox" /> Flow calibration when supported</label>
+      <div id="queueAddStatus" class="subtle"></div>
+      <div id="queueAddError" class="error hidden"></div>
+      <div class="actions">
+        <button type="button" class="secondary" data-queue-add-close>Cancel</button>
+        <button type="submit" class="primary">Add to queue</button>
+      </div>
+    </form>
   </dialog>
 
   <dialog id="batchActionDialog" class="batch-action-dialog">
