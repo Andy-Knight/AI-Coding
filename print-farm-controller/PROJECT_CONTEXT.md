@@ -42,7 +42,9 @@ Manufacturer-specific discovery, capabilities, limits, status normalization, fil
 - Preserve the legacy application-data directory for upgrade compatibility.
 - Queue/history is controller-side and persistent across restarts.
 - A completed/active-failed/cancelled print creates a **bed-clearance interlock**; the next queued job for that printer must not start until **Bed cleared** is confirmed.
-- Queue jobs currently target a specific printer; automatic compatible-printer scheduling is a future layer.
+- Current v0.10.9 queue jobs target a specific printer and assume the file is already present there.
+- Next queue milestone is **file-centric scheduling** with a **Next available compatible printer** mode. The controller should retain/stage the G-code, select an eligible printer, distribute and verify the file if needed, perform printer-specific preflight, then start it.
+- Compatibility must be evaluated centrally from normalized printer capabilities/status, while printer-specific preflight remains behind the adapter boundary.
 - FlashForge AD5M/Pro: local HTTP/TCP APIs, bed limit up to 110 °C on supported firmware, nozzle up to 265 °C.
 - Snapmaker U1: native Moonraker/Klipper integration, four tools, stock camera workflow, native print preferences/tool mapping and stock calibration commands.
 - Stored-file material checks are advisory for interactive printing; unsafe/ambiguous unattended queue starts are held for review where applicable.
@@ -65,17 +67,33 @@ Manufacturer-specific discovery, capabilities, limits, status normalization, fil
 
 ## Current task
 
-Establish reliable cross-chat continuity. The v0.10.9 application has been manually uploaded to GitHub under `print-farm-controller/`, and `PROJECT_CONTEXT.md` is now the handoff document.
+Design and implement **Next available compatible printer** scheduling by extending the persistent queue from printer-centric jobs to optionally file-centric jobs.
 
-There is **no unfinished feature implementation currently recorded**. The next functional task should be set here when work begins.
+A file-centric queued job should be able to wait without a fixed printer. The controller should determine which printers can safely run it, expose eligible/blocked reasons in the UI, choose an appropriate idle printer, ensure the G-code is present on that printer, verify upload, run printer-specific preflight, and start the print.
+
+Compatibility considerations:
+
+- Printer/manufacturer capabilities.
+- Number of required tools.
+- Required nozzle diameter.
+- Loaded material and colour where known.
+- U1 logical-to-physical tool mapping/readiness.
+- Printer online/idle state.
+- Outstanding bed-clearance interlock.
+- Whether the file already exists on the printer (optimization, not a hard requirement once staging/distribution exists).
+
+Target UI state should clearly distinguish jobs such as **Queued — waiting for compatible printer**, and show eligible printers plus blocked printers with reasons (for example, bed not cleared, wrong nozzle, material mismatch, offline/busy).
 
 ## Next steps
 
-1. At the start of a new chat, read this file plus `package.json` and the relevant source files before making changes.
-2. Record the active feature/bug under **Current task** before or during substantial work.
-3. Make changes against the GitHub baseline, run the relevant automated tests, and avoid regressions to existing printer support.
-4. Increment the application version for a new delivered version and update README/context where appropriate.
-5. When a task is complete, summarize the result under **Completed work**, replace **Current task**, and update **Next steps** rather than turning this file into a detailed changelog.
+1. Add **persistent staged queue files** so the controller owns a durable copy of queued G-code instead of requiring the file to pre-exist on a printer.
+2. Define a normalized **compatibility engine** returning eligible/blocked printers with explicit reason codes/messages.
+3. Add **automatic printer selection** for file-centric jobs while preserving existing fixed-printer queue behavior for backward compatibility.
+4. Reuse/extend verified file distribution so the staged file is uploaded only when required and verified before start.
+5. Run the selected printer's existing **printer-specific preflight** immediately before start; changed filament/nozzle/tool state must not be silently ignored.
+6. Extend queue persistence/restart reconciliation, cancellation, reprint/history, SSE payloads and UI for unassigned/file-centric jobs.
+7. Add regression tests for compatibility decisions, scheduling fairness/races, restart persistence, bed-clearance blocking, upload failure and preflight failure.
+8. Increment the application version when the milestone is delivered and update README/context accordingly.
 
 ## Handoff rule
 
