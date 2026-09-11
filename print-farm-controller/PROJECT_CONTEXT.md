@@ -80,6 +80,7 @@ Manufacturer-specific discovery, capabilities, limits, status normalization, fil
 - **v0.11.1 FlashForge nozzle designation:** persistent per-printer controller nozzle diameter, normalized into FlashForge tool status and enforced by file-centric automatic queue compatibility; explicit nozzle matches can run unattended and mismatches are blocked.
 - v0.11.1 regression suite: **105 passing tests, 0 failures**, including GitHub Actions verification.
 - **v0.11.2 neutral data directory:** default controller storage no longer contains `FlashForge`; existing printer registry, queue/history, staged queue files, and metadata migrate automatically to the new manufacturer-neutral directory.
+- v0.11.2 regression suite: **106 passing tests, 0 failures**, including an end-to-end legacy-directory migration test in GitHub Actions.
 
 ## Current task
 
