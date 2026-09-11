@@ -1,0 +1,170 @@
+name: Apply Printer Fleet Controller v0.11.3
+
+on:
+  push:
+    branches:
+      - feature/immediate-queue-file-cleanup
+    paths:
+      - .github/workflows/apply-pfc-v0113.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply-test-finalize:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out feature branch
+        uses: actions/checkout@v4
+        with:
+          ref: feature/immediate-queue-file-cleanup
+          fetch-depth: 0
+
+      - name: Apply v0.11.3 cleanup change and tests
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          queue = Path('print-farm-controller/src/print-queue.js')
+          text = queue.read_text()
+          old = """  async clearHistory() {
+            const before = this.jobs.length;
+            this.jobs = this.jobs.filter((job) => !TERMINAL_STATES.has(job.status) || (job.bedClearanceRequired === true && !job.bedClearedAt));
+            if (this.jobs.length !== before) await this.persistAndNotify();
+            return before - this.jobs.length;
+          }
+"""
+          new = """  async clearHistory() {
+            const before = this.jobs.length;
+            this.jobs = this.jobs.filter((job) => !TERMINAL_STATES.has(job.status) || (job.bedClearanceRequired === true && !job.bedClearedAt));
+            if (this.jobs.length !== before) {
+              await this.persistAndNotify();
+              const referencedIds = this.jobs.map((job) => job.stagedFile?.id).filter(Boolean);
+              await this.pruneQueueFiles(referencedIds, { minAgeMs:0 }).catch(() => {});
+            }
+            return before - this.jobs.length;
+          }
+"""
+          if old not in text:
+              raise SystemExit('clearHistory anchor not found')
+          queue.write_text(text.replace(old, new, 1))
+
+          tests = Path('print-farm-controller/test/print-queue.test.js')
+          text = tests.read_text()
+          anchor = """test('cancelling a waiting queue item does not create a bed-clearance requirement', async () => {
+"""
+          test_block = """test('clearing history immediately prunes unreferenced staged files but keeps files still referenced', async () => {
+            const orphanId = '44444444-4444-4444-8444-444444444444';
+            const sharedId = '55555555-5555-4555-8555-555555555555';
+            const jobs = [
+              {
+                id:'done-orphan', assignmentMode:'automatic', printerId:'p1', printerName:'Printer', fileName:'orphan.gcode',
+                stagedFile:{ id:orphanId, fileName:'orphan.gcode' }, status:'completed', options:{}, queuedAt:'2026-09-11T10:00:00.000Z',
+                updatedAt:'2026-09-11T10:30:00.000Z', finishedAt:'2026-09-11T10:30:00.000Z', bedClearanceRequired:false, bedClearedAt:null
+              },
+              {
+                id:'done-shared', assignmentMode:'automatic', printerId:'p1', printerName:'Printer', fileName:'shared.gcode',
+                stagedFile:{ id:sharedId, fileName:'shared.gcode' }, status:'completed', options:{}, queuedAt:'2026-09-11T10:00:00.000Z',
+                updatedAt:'2026-09-11T10:30:00.000Z', finishedAt:'2026-09-11T10:30:00.000Z', bedClearanceRequired:false, bedClearedAt:null
+              },
+              {
+                id:'review-shared', assignmentMode:'automatic', printerId:null, printerName:'Next available compatible printer', fileName:'shared.gcode',
+                stagedFile:{ id:sharedId, fileName:'shared.gcode' }, status:'needs_review', options:{}, queuedAt:'2026-09-11T10:31:00.000Z',
+                updatedAt:'2026-09-11T10:31:00.000Z', bedClearanceRequired:false, bedClearedAt:null
+              }
+            ];
+            const store = memoryStore(jobs);
+            const pruneCalls = [];
+            const service = new PrintQueueService({
+              fleetState:new FakeFleetState([]),
+              chamberPreheat:{ isActive:() => false, stop:async () => {} },
+              loadJobsFn:store.load,
+              saveJobsFn:store.save,
+              pruneQueueFilesFn:async (referencedIds, options) => { pruneCalls.push({ referencedIds:[...referencedIds], options }); return 0; }
+            });
+            await service.start();
+            pruneCalls.length = 0;
+
+            assert.equal(await service.clearHistory(), 2);
+            assert.deepEqual(service.getSnapshot().jobs.map((job) => job.id), ['review-shared']);
+            assert.equal(pruneCalls.length, 2);
+            assert.deepEqual(pruneCalls[0], { referencedIds:[sharedId], options:undefined });
+            assert.deepEqual(pruneCalls[1], { referencedIds:[sharedId], options:{ minAgeMs:0 } });
+            service.stop();
+          });
+
+"""
+          if test_block not in text:
+              if anchor not in text:
+                  raise SystemExit('print queue test anchor not found')
+              text = text.replace(anchor, test_block + anchor, 1)
+          tests.write_text(text)
+
+          qstore = Path('print-farm-controller/test/queue-file-store.test.js')
+          text = qstore.read_text()
+          old = """  const { dir, stageQueueFile, getQueueFile, removeQueueFile } = await loadStoreInTempDir();
+"""
+          new = """  const { dir, stageQueueFile, getQueueFile, removeQueueFile, pruneQueueFiles } = await loadStoreInTempDir();
+"""
+          if old not in text:
+              raise SystemExit('queue file store import anchor not found')
+          text = text.replace(old, new, 1)
+          old = """  await removeQueueFile(staged.id);
+            await assert.rejects(() => getQueueFile(staged.id));
+            await fs.rm(dir, { recursive:true, force:true });
+"""
+          new = """  await removeQueueFile(staged.id);
+            await assert.rejects(() => getQueueFile(staged.id));
+
+            const orphan = await stageQueueFile(source, 'orphan.gcode');
+            await pruneQueueFiles([], { minAgeMs:0 });
+            await assert.rejects(() => getQueueFile(orphan.id));
+            await fs.rm(dir, { recursive:true, force:true });
+"""
+          if old not in text:
+              raise SystemExit('queue file prune test anchor not found')
+          qstore.write_text(text.replace(old, new, 1))
+
+          package = Path('print-farm-controller/package.json')
+          text = package.read_text()
+          if '"version": "0.11.2"' not in text:
+              raise SystemExit('package version anchor not found')
+          package.write_text(text.replace('"version": "0.11.2"', '"version": "0.11.3"', 1))
+
+          readme = Path('print-farm-controller/README.md')
+          text = readme.read_text()
+          text = text.replace('# Printer Fleet Controller v0.11.2', '# Printer Fleet Controller v0.11.3', 1)
+          marker = '> v0.11.2 moves the default controller application-data directory'
+          intro = '> v0.11.3 makes **Clear history** immediately delete controller-staged queue files that are no longer referenced. Files still referenced by queued/active/review jobs, retained bed-clearance records, or another history item are preserved. The normal one-hour orphan grace period remains in place for non-explicit cleanup paths.\n\n'
+          if intro.strip() not in text:
+              if marker not in text:
+                  raise SystemExit('README release anchor not found')
+              text = text.replace(marker, intro + marker, 1)
+          readme.write_text(text)
+
+          context = Path('print-farm-controller/PROJECT_CONTEXT.md')
+          text = context.read_text()
+          text = text.replace('Current application version: **0.11.2**', 'Current application version: **0.11.3**')
+          completed = '- **v0.11.3 staged-file cleanup:** clearing print history immediately removes controller-staged queue files that have no remaining queue/history reference; shared/referenced files are retained.\n'
+          marker = '- v0.11.2 regression suite: **106 passing tests, 0 failures**, including an end-to-end legacy-directory migration test in GitHub Actions.\n'
+          if completed not in text:
+              if marker not in text:
+                  raise SystemExit('PROJECT_CONTEXT completed-work anchor not found')
+              text = text.replace(marker, marker + completed, 1)
+          text = text.replace('**v0.11.2 implementation is complete in code and automated tests.**', '**v0.11.3 implementation is complete in code and automated tests.**')
+          text = text.replace('1. Deploy/run v0.11.2, confirm', '1. Deploy/run v0.11.3, confirm')
+          context.write_text(text)
+          PY
+
+      - name: Run full test suite
+        working-directory: print-farm-controller
+        run: npm test
+
+      - name: Commit tested v0.11.3 release
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/apply-pfc-v0113.yml
+          git add print-farm-controller
+          git commit -m "Clean orphaned staged queue files v0.11.3"
+          git push origin HEAD:feature/immediate-queue-file-cleanup
