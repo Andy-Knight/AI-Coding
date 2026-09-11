@@ -56,6 +56,10 @@ function publicJob(job) {
   } : null;
   return {
     id: job.id,
+    productionBatchId: job.productionBatchId || null,
+    productionSequence: Number.isInteger(Number(job.productionSequence)) && Number(job.productionSequence) > 0 ? Number(job.productionSequence) : null,
+    productionQuantity: Number.isInteger(Number(job.productionQuantity)) && Number(job.productionQuantity) > 0 ? Number(job.productionQuantity) : null,
+    productionPaused: job.productionPaused === true,
     assignmentMode: job.assignmentMode === 'automatic' ? 'automatic' : 'fixed',
     printerId: job.printerId || null,
     printerName: job.printerName || null,
@@ -145,6 +149,34 @@ function checkToolSnapshot(snapshot, status) {
 }
 
 
+function cloneProductionRun(template, sequence, quantity, paused = template.productionPaused === true) {
+  const timestamp = nowIso();
+  return {
+    ...structuredClone(template),
+    id: crypto.randomUUID(),
+    printerId: null,
+    printerName: 'Next available compatible printer',
+    productionSequence: sequence,
+    productionQuantity: quantity,
+    productionPaused: paused,
+    compatibility: null,
+    options: { ...sanitizeOptions(template.options), toolMap:null, usedLogicalTools:[] },
+    toolSnapshot: [],
+    status: 'queued',
+    queuedAt: timestamp,
+    startRequestedAt: null,
+    startedAt: null,
+    finishedAt: null,
+    updatedAt: timestamp,
+    error: null,
+    maxProgress: 0,
+    lastPrinterState: null,
+    bedClearanceRequired: false,
+    bedClearedAt: null
+  };
+}
+
+
 export class PrintQueueService {
   constructor({
     fleetState,
@@ -192,6 +224,9 @@ export class PrintQueueService {
         ...job,
         assignmentMode,
         ...(interruptedAutomatic ? { status:'queued', printerId:null, printerName:'Next available compatible printer', error:'Controller restarted before automatic assignment completed; job returned to the queue.' } : {}),
+        productionPaused: job.productionPaused === true,
+        productionSequence: Number.isInteger(Number(job.productionSequence)) && Number(job.productionSequence) > 0 ? Number(job.productionSequence) : null,
+        productionQuantity: Number.isInteger(Number(job.productionQuantity)) && Number(job.productionQuantity) > 0 ? Number(job.productionQuantity) : null,
         options: sanitizeOptions(job.options || {}),
         bedClearanceRequired: job.bedClearanceRequired === true,
         bedClearedAt: job.bedClearedAt || null
@@ -221,8 +256,141 @@ export class PrintQueueService {
       history: jobs.filter((job) => TERMINAL_STATES.has(job.status)).length,
       needsReview: jobs.filter((job) => job.status === 'needs_review').length,
       awaitingClearance: bedClearance.length,
-      bedClearance
+      bedClearance,
+      productionBatches: this.getProductionBatches()
     };
+  }
+
+  getProductionBatches() {
+    const groups = new Map();
+    for (const job of this.jobs) {
+      if (!job.productionBatchId) continue;
+      if (!groups.has(job.productionBatchId)) groups.set(job.productionBatchId, []);
+      groups.get(job.productionBatchId).push(job);
+    }
+    return [...groups.entries()].map(([id, batchJobs]) => {
+      const runs = [...batchJobs].sort((a, b) => Number(a.productionSequence || 0) - Number(b.productionSequence || 0));
+      const queued = runs.filter((job) => job.status === 'queued').length;
+      const needsReview = runs.filter((job) => job.status === 'needs_review').length;
+      const completed = runs.filter((job) => job.status === 'completed').length;
+      const failed = runs.filter((job) => job.status === 'failed').length;
+      const cancelled = runs.filter((job) => job.status === 'cancelled').length;
+      const active = runs.filter((job) => ACTIVE_QUEUE_STATES.has(job.status)).length;
+      const quantity = Math.max(runs.length, ...runs.map((job) => Number(job.productionQuantity || 0)));
+      const finished = runs.every((job) => TERMINAL_STATES.has(job.status));
+      const paused = !finished && runs.some((job) => job.productionPaused === true && !TERMINAL_STATES.has(job.status));
+      return {
+        id,
+        fileName: runs[0]?.fileName || 'Production job',
+        quantity,
+        completed,
+        active,
+        queued,
+        needsReview,
+        failed,
+        cancelled,
+        remaining: queued + needsReview,
+        paused,
+        finished,
+        stagedFile: runs[0]?.stagedFile ? { ...runs[0].stagedFile } : null,
+        queuedAt: runs.map((job) => job.queuedAt).filter(Boolean).sort()[0] || null,
+        updatedAt: runs.map((job) => job.updatedAt).filter(Boolean).sort().at(-1) || null,
+        runs: runs.map((job) => ({
+          id: job.id,
+          sequence: Number(job.productionSequence || 0),
+          status: job.status,
+          printerId: job.printerId || null,
+          printerName: this.fleetState.getPrinterState(job.printerId)?.name || job.printerName || null,
+          progress: Number(job.maxProgress || 0),
+          error: job.error || null,
+          bedClearanceRequired: job.bedClearanceRequired === true && !job.bedClearedAt
+        }))
+      };
+    }).sort((a, b) => new Date(a.queuedAt || 0).getTime() - new Date(b.queuedAt || 0).getTime());
+  }
+
+  getProductionJobs(batchId) {
+    const id = String(batchId || '').trim();
+    const jobs = this.jobs.filter((job) => job.productionBatchId === id);
+    if (!jobs.length) throw new Error('Production batch not found');
+    return jobs;
+  }
+
+  async pauseProduction(batchId) {
+    const jobs = this.getProductionJobs(batchId);
+    let changed = false;
+    for (const job of jobs) {
+      if (TERMINAL_STATES.has(job.status)) continue;
+      if (!job.productionPaused) changed = true;
+      job.productionPaused = true;
+      job.updatedAt = nowIso();
+    }
+    if (changed) await this.persistAndNotify();
+    return this.getProductionBatches().find((batch) => batch.id === batchId);
+  }
+
+  async resumeProduction(batchId) {
+    const jobs = this.getProductionJobs(batchId);
+    let changed = false;
+    for (const job of jobs) {
+      if (TERMINAL_STATES.has(job.status)) continue;
+      if (job.productionPaused) changed = true;
+      job.productionPaused = false;
+      job.updatedAt = nowIso();
+    }
+    if (changed) await this.persistAndNotify();
+    this.scheduleReconcile();
+    return this.getProductionBatches().find((batch) => batch.id === batchId);
+  }
+
+  async cancelProduction(batchId) {
+    const jobs = this.getProductionJobs(batchId);
+    let cancelled = 0;
+    for (const job of jobs) {
+      if (!['queued', 'needs_review'].includes(job.status)) continue;
+      this.markTerminal(job, 'cancelled', null, { requireBedClearance:false });
+      job.productionPaused = false;
+      cancelled++;
+    }
+    if (cancelled) await this.persistAndNotify();
+    return { cancelled, batch:this.getProductionBatches().find((batch) => batch.id === batchId) };
+  }
+
+  async setProductionQuantity(batchId, quantity) {
+    const target = Number(quantity);
+    if (!Number.isInteger(target) || target < 1 || target > 999) throw new Error('Production quantity must be a whole number from 1 to 999');
+    let jobs = this.getProductionJobs(batchId);
+    const nonRemovable = jobs.filter((job) => !['queued', 'needs_review'].includes(job.status)).length;
+    if (target < nonRemovable) {
+      throw new Error(`Production quantity cannot be below ${nonRemovable} because those copies have already started or finished`);
+    }
+
+    if (target < jobs.length) {
+      const removeCount = jobs.length - target;
+      const removable = jobs
+        .filter((job) => ['queued', 'needs_review'].includes(job.status))
+        .sort((a, b) => Number(b.productionSequence || 0) - Number(a.productionSequence || 0));
+      if (removable.length < removeCount) throw new Error('Not enough waiting copies remain to reduce the production quantity');
+      const removeIds = new Set(removable.slice(0, removeCount).map((job) => job.id));
+      this.jobs = this.jobs.filter((job) => !removeIds.has(job.id));
+      jobs = this.getProductionJobs(batchId);
+    } else if (target > jobs.length) {
+      const template = jobs[0];
+      const paused = jobs.some((job) => job.productionPaused === true && !TERMINAL_STATES.has(job.status));
+      let sequence = Math.max(...jobs.map((job) => Number(job.productionSequence || 0)));
+      for (let i = jobs.length; i < target; i++) {
+        this.jobs.push(cloneProductionRun(template, ++sequence, target, paused));
+      }
+      jobs = this.getProductionJobs(batchId);
+    }
+
+    for (const job of jobs) {
+      job.productionQuantity = target;
+      job.updatedAt = nowIso();
+    }
+    await this.persistAndNotify();
+    this.scheduleReconcile();
+    return this.getProductionBatches().find((batch) => batch.id === batchId);
   }
 
   getBedClearance() {
@@ -266,8 +434,12 @@ export class PrintQueueService {
     return job ? publicJob(job) : null;
   }
 
-  async add({ printerId, fileName, options = {}, assignmentMode = 'fixed', stagedFileId = null } = {}) {
+  async add({ printerId, fileName, options = {}, assignmentMode = 'fixed', stagedFileId = null, quantity = 1 } = {}) {
     const mode = assignmentMode === 'automatic' ? 'automatic' : 'fixed';
+    const requestedQuantity = Number(quantity ?? 1);
+    if (!Number.isInteger(requestedQuantity) || requestedQuantity < 1 || requestedQuantity > 999) throw new Error('Production quantity must be a whole number from 1 to 999');
+    if (requestedQuantity > 1 && mode !== 'automatic') throw new Error('Production quantities greater than one require Next available compatible printer scheduling');
+    const productionBatchId = requestedQuantity > 1 ? crypto.randomUUID() : null;
     let stagedFile = null;
     if (stagedFileId) stagedFile = await this.getQueueFile(stagedFileId);
     if (mode === 'automatic' && !stagedFile) throw new Error('Automatic queue jobs require a staged controller file');
@@ -305,6 +477,10 @@ export class PrintQueueService {
 
     const job = {
       id: crypto.randomUUID(),
+      productionBatchId,
+      productionSequence: productionBatchId ? 1 : null,
+      productionQuantity: productionBatchId ? requestedQuantity : null,
+      productionPaused: false,
       assignmentMode: mode,
       printerId: mode === 'fixed' ? printer.id : null,
       printerName: mode === 'fixed' ? printer.name : 'Next available compatible printer',
@@ -334,6 +510,11 @@ export class PrintQueueService {
       bedClearedAt: null
     };
     this.jobs.push(job);
+    if (productionBatchId) {
+      for (let sequence = 2; sequence <= requestedQuantity; sequence++) {
+        this.jobs.push(cloneProductionRun(job, sequence, requestedQuantity, false));
+      }
+    }
     await this.persistAndNotify();
     this.scheduleReconcile();
     return publicJob(job);
@@ -417,7 +598,8 @@ export class PrintQueueService {
 
   async clearHistory() {
     const before = this.jobs.length;
-    this.jobs = this.jobs.filter((job) => !TERMINAL_STATES.has(job.status) || (job.bedClearanceRequired === true && !job.bedClearedAt));
+    const activeProductionIds = new Set(this.jobs.filter((job) => job.productionBatchId && !TERMINAL_STATES.has(job.status)).map((job) => job.productionBatchId));
+    this.jobs = this.jobs.filter((job) => !TERMINAL_STATES.has(job.status) || (job.bedClearanceRequired === true && !job.bedClearedAt) || activeProductionIds.has(job.productionBatchId));
     if (this.jobs.length !== before) {
       await this.persistAndNotify();
       const referencedIds = this.jobs.map((job) => job.stagedFile?.id).filter(Boolean);
@@ -508,7 +690,7 @@ export class PrintQueueService {
       // the persistent bed-clearance interlock.
       for (let index = 0; index < this.jobs.length; index++) {
         const job = this.jobs[index];
-        if (job.status !== 'queued' || job.assignmentMode !== 'automatic') continue;
+        if (job.status !== 'queued' || job.assignmentMode !== 'automatic' || job.productionPaused === true) continue;
         const evaluation = await this.refreshAutomaticCompatibility(job, fleet, index);
         changed = evaluation.changed || changed;
         const candidate = evaluation.results.find((item) => item.ready);
@@ -792,7 +974,8 @@ export class PrintQueueService {
   }
 
   trimHistory() {
-    const removableTerminal = this.jobs.filter((job) => TERMINAL_STATES.has(job.status) && !(job.bedClearanceRequired === true && !job.bedClearedAt));
+    const activeProductionIds = new Set(this.jobs.filter((job) => job.productionBatchId && !TERMINAL_STATES.has(job.status)).map((job) => job.productionBatchId));
+    const removableTerminal = this.jobs.filter((job) => TERMINAL_STATES.has(job.status) && !(job.bedClearanceRequired === true && !job.bedClearedAt) && !activeProductionIds.has(job.productionBatchId));
     const pendingClearanceCount = this.jobs.filter((job) => TERMINAL_STATES.has(job.status) && job.bedClearanceRequired === true && !job.bedClearedAt).length;
     const removableLimit = Math.max(0, MAX_HISTORY - pendingClearanceCount);
     if (removableTerminal.length <= removableLimit) return;

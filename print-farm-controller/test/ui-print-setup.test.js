@@ -206,3 +206,21 @@ test('printer detail supports persistent controller-side renaming while retainin
   assert.match(store, /export async function renamePrinter/);
   assert.match(store, /Printer name must be 80 characters or fewer/);
 });
+
+
+test('queue UI exposes production quantity and batch controls', () => {
+  const html = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
+  const server = fs.readFileSync(new URL('../src/server.js', import.meta.url), 'utf8');
+  const queue = fs.readFileSync(new URL('../src/print-queue.js', import.meta.url), 'utf8');
+  assert.match(html, /id="queueAddQuantity"/);
+  assert.match(html, /Quantity 2 or more creates one production batch/);
+  assert.match(app, /productionBatchMarkup/);
+  assert.match(app, /Pause production/);
+  assert.match(app, /Cancel remaining/);
+  assert.match(app, /data-production-quantity/);
+  assert.match(server, /productionQueueMatch/);
+  assert.match(queue, /pauseProduction/);
+  assert.match(queue, /setProductionQuantity/);
+  assert.match(queue, /productionBatches/);
+  assert.match(styles, /\.production-progress/);
+});

@@ -39,7 +39,7 @@ const queueAddError = document.querySelector('#queueAddError');
 
 let fleet = [];
 let adapters = [];
-let queueState = { jobs:[], queued:0, active:0, history:0, needsReview:0, awaitingClearance:0, bedClearance:[] };
+let queueState = { jobs:[], queued:0, active:0, history:0, needsReview:0, awaitingClearance:0, bedClearance:[], productionBatches:[] };
 let eventSource = null;
 let currentPrinterId = null;
 let lastDiscoveryAt = 0;
@@ -377,40 +377,89 @@ function queueClearanceMarkup(item) {
   </article>`;
 }
 
+function productionBatchMarkup(batch, { history = false } = {}) {
+  const quantity = Math.max(1, Number(batch.quantity || 1));
+  const completed = Number(batch.completed || 0);
+  const active = Number(batch.active || 0);
+  const remaining = Number(batch.remaining || 0);
+  const failed = Number(batch.failed || 0);
+  const cancelled = Number(batch.cancelled || 0);
+  const progress = Math.max(0, Math.min(100, Math.round((completed / quantity) * 100)));
+  const state = batch.paused ? 'Paused'
+    : batch.finished ? (failed ? 'Completed with failures' : cancelled && !completed ? 'Cancelled' : 'Completed')
+    : active ? 'Printing'
+    : batch.needsReview ? 'Needs review'
+    : 'Queued';
+  const runs = Array.isArray(batch.runs) ? batch.runs : [];
+  const visibleRuns = runs.slice(0, 12);
+  const runMarkup = visibleRuns.map((run) => {
+    const printer = run.printerName || (run.status === 'queued' ? 'Waiting for compatible printer' : 'Unassigned');
+    const pct = run.status === 'printing' ? ` · ${Math.round(Number(run.progress || 0))}%` : '';
+    return `<div class="production-run"><span>#${run.sequence} · ${escapeHtml(queueStatusLabel(run.status))}${pct}</span><span>${escapeHtml(printer)}</span></div>`;
+  }).join('');
+  const more = runs.length > visibleRuns.length ? `<div class="subtle">+ ${runs.length - visibleRuns.length} more copies</div>` : '';
+  const controls = !history && !batch.finished ? `<div class="production-actions">
+      <button type="button" class="secondary" data-production-action="${batch.paused ? 'resume' : 'pause'}" data-production-batch="${escapeHtml(batch.id)}">${batch.paused ? 'Resume production' : 'Pause production'}</button>
+      <label class="production-quantity-control">Quantity <input type="number" min="1" max="999" step="1" value="${quantity}" data-production-quantity-input="${escapeHtml(batch.id)}"></label>
+      <button type="button" class="secondary" data-production-quantity="${escapeHtml(batch.id)}">Update quantity</button>
+      ${remaining ? `<button type="button" class="danger" data-production-action="cancel" data-production-batch="${escapeHtml(batch.id)}">Cancel remaining</button>` : ''}
+    </div>` : '';
+  return `<article class="queue-job production-batch${batch.paused ? ' production-paused' : ''}" data-production-card="${escapeHtml(batch.id)}">
+    <div class="queue-job-main">
+      <div class="queue-job-title"><strong>${escapeHtml(batch.fileName)}</strong><span class="queue-status ${batch.paused ? 'paused' : batch.finished ? 'completed' : active ? 'printing' : 'queued'}">${escapeHtml(state)}</span></div>
+      <div class="queue-job-printer">Production quantity ${quantity}</div>
+      <div class="production-counts">Completed ${completed} · Printing/preparing ${active} · Remaining ${remaining}${failed ? ` · Failed ${failed}` : ''}${cancelled ? ` · Cancelled ${cancelled}` : ''}</div>
+      <div class="production-progress"><span style="width:${progress}%"></span></div>
+      <div class="production-runs">${runMarkup}${more}</div>
+    </div>
+    ${controls}
+  </article>`;
+}
+
 function renderPrintQueue() {
   if (!queueDialog) return;
   const jobs = Array.isArray(queueState?.jobs) ? queueState.jobs : [];
+  const productionBatches = Array.isArray(queueState?.productionBatches) ? queueState.productionBatches : [];
+  const standaloneJobs = jobs.filter((job) => !job.productionBatchId);
   const queuedJobs = jobs.filter((job) => job.status === 'queued');
   const activeJobs = jobs.filter((job) => ['uploading','preflight','starting','printing'].includes(job.status));
   const reviewJobs = jobs.filter((job) => job.status === 'needs_review');
-  const currentJobs = [...activeJobs, ...reviewJobs, ...queuedJobs];
+  const currentJobs = standaloneJobs.filter((job) => ['uploading','preflight','starting','printing','needs_review','queued'].includes(job.status));
+  const activeProduction = productionBatches.filter((batch) => !batch.finished);
+  const historyProduction = productionBatches.filter((batch) => batch.finished).reverse().slice(0, 100);
   const clearanceItems = Array.isArray(queueState?.bedClearance) ? queueState.bedClearance : [];
-  const historyJobs = jobs.filter((job) => ['completed', 'failed', 'cancelled'].includes(job.status)).reverse().slice(0, 100);
-  const clearableHistoryJobs = historyJobs.filter((job) => !(job.bedClearanceRequired === true && !job.bedClearedAt));
-  const outstanding = currentJobs.length + clearanceItems.length;
+  const allHistoryJobs = jobs.filter((job) => ['completed', 'failed', 'cancelled'].includes(job.status));
+  const historyJobs = standaloneJobs.filter((job) => ['completed', 'failed', 'cancelled'].includes(job.status)).reverse().slice(0, 100);
+  const clearableHistoryJobs = allHistoryJobs.filter((job) => !(job.bedClearanceRequired === true && !job.bedClearedAt));
+  const outstanding = currentJobs.length + activeProduction.length + clearanceItems.length;
+  const historyCount = historyJobs.length + historyProduction.length;
 
   if (queueButtonCount) {
     queueButtonCount.textContent = String(outstanding);
     queueButtonCount.classList.toggle('hidden', outstanding === 0);
   }
   if (queueSummary) {
+    const productionText = activeProduction.length ? ` · ${activeProduction.length} production batch${activeProduction.length === 1 ? '' : 'es'}` : '';
     queueSummary.textContent = outstanding
-      ? `${activeJobs.length} active · ${queuedJobs.length} queued · ${reviewJobs.length} needs review · ${clearanceItems.length} awaiting bed clearance · ${historyJobs.length} recent history`
-      : `${historyJobs.length ? `${historyJobs.length} history item${historyJobs.length === 1 ? '' : 's'}` : 'No queued prints'}`;
+      ? `${activeJobs.length} active · ${queuedJobs.length} queued copies · ${reviewJobs.length} needs review${productionText} · ${clearanceItems.length} awaiting bed clearance · ${historyCount} recent history`
+      : `${historyCount ? `${historyCount} history item${historyCount === 1 ? '' : 's'}` : 'No queued prints'}`;
   }
   if (queueActiveList) {
     const clearanceMarkup = clearanceItems.map(queueClearanceMarkup).join('');
+    const productionMarkup = activeProduction.map((batch) => productionBatchMarkup(batch)).join('');
     const jobsMarkup = currentJobs.map((job) => queueJobMarkup(job, {
       queuedIndex: job.status === 'queued' ? queuedJobs.findIndex((queued) => queued.id === job.id) : -1,
       queuedCount: queuedJobs.length
     })).join('');
-    queueActiveList.innerHTML = clearanceMarkup || jobsMarkup
-      ? `${clearanceMarkup}${jobsMarkup}`
+    queueActiveList.innerHTML = clearanceMarkup || productionMarkup || jobsMarkup
+      ? `${clearanceMarkup}${productionMarkup}${jobsMarkup}`
       : '<div class="queue-empty">No active, queued or review-blocked jobs.</div>';
   }
   if (queueHistoryList) {
-    queueHistoryList.innerHTML = historyJobs.length
-      ? historyJobs.map((job) => queueJobMarkup(job, { history:true })).join('')
+    const productionHistoryMarkup = historyProduction.map((batch) => productionBatchMarkup(batch, { history:true })).join('');
+    const jobHistoryMarkup = historyJobs.map((job) => queueJobMarkup(job, { history:true })).join('');
+    queueHistoryList.innerHTML = productionHistoryMarkup || jobHistoryMarkup
+      ? `${productionHistoryMarkup}${jobHistoryMarkup}`
       : '<div class="queue-empty">Completed, failed and cancelled queued prints will appear here.</div>';
   }
   if (clearQueueHistoryBtn) {
@@ -434,7 +483,7 @@ async function addPrintQueueJob(printer, fileName, options = {}) {
   return result.job;
 }
 
-async function stageAutomaticQueueFile(file, options = {}) {
+async function stageAutomaticQueueFile(file, options = {}, quantity = 1) {
   if (!(file instanceof File) || !file.size) throw new Error('Choose a file to queue');
   if (file.size > 512 * 1024 * 1024) throw new Error('File exceeds the 512 MB upload limit');
   let stagedFile = null;
@@ -452,6 +501,7 @@ async function stageAutomaticQueueFile(file, options = {}) {
       body:JSON.stringify({
         assignmentMode:'automatic',
         stagedFileId:stagedFile.id,
+        quantity,
         options
       })
     });
@@ -823,11 +873,12 @@ queueAddForm?.addEventListener('submit', async (event) => {
   if (queueAddStatus) queueAddStatus.textContent = 'Staging file on controller…';
   try {
     const data = new FormData(queueAddForm);
+    const quantity = Number(data.get('quantity') || 1);
     await stageAutomaticQueueFile(file, {
       levelingBeforePrint:data.get('levelingBeforePrint') === 'on',
       flowCalibrationBeforePrint:data.get('flowCalibrationBeforePrint') === 'on'
-    });
-    if (queueAddStatus) queueAddStatus.textContent = 'Added to fleet queue';
+    }, quantity);
+    if (queueAddStatus) queueAddStatus.textContent = quantity > 1 ? `Added ${quantity} copies as a production batch` : 'Added to fleet queue';
     queueAddDialog?.close();
     renderPrintQueue();
   } catch (error) {
@@ -846,6 +897,33 @@ clearQueueHistoryBtn?.addEventListener('click', async () => {
   } catch (error) { alert(error.message); }
 });
 queueActiveList?.addEventListener('click', async (event) => {
+  const productionAction = event.target.closest('[data-production-action]');
+  if (productionAction) {
+    const batchId = productionAction.dataset.productionBatch;
+    const action = productionAction.dataset.productionAction;
+    if (action === 'cancel' && !confirm('Cancel all copies in this production batch that have not started yet? Active prints will continue.')) return;
+    productionAction.disabled = true;
+    try {
+      const result = await api(`/api/queue/production/${encodeURIComponent(batchId)}/${action}`, { method:'POST', body:'{}' });
+      queueState = result.queue || queueState;
+      renderPrintQueue();
+    } catch (error) { alert(error.message); productionAction.disabled = false; }
+    return;
+  }
+  const productionQuantity = event.target.closest('[data-production-quantity]');
+  if (productionQuantity) {
+    const batchId = productionQuantity.dataset.productionQuantity;
+    const card = productionQuantity.closest('[data-production-card]');
+    const input = card?.querySelector(`[data-production-quantity-input="${batchId}"]`);
+    const quantity = Number(input?.value);
+    productionQuantity.disabled = true;
+    try {
+      const result = await api(`/api/queue/production/${encodeURIComponent(batchId)}/quantity`, { method:'POST', body:JSON.stringify({ quantity }) });
+      queueState = result.queue || queueState;
+      renderPrintQueue();
+    } catch (error) { alert(error.message); productionQuantity.disabled = false; }
+    return;
+  }
   const cleared = event.target.closest('[data-bed-cleared]');
   if (cleared) {
     const item = (queueState.bedClearance || []).find((entry) => entry.printerId === cleared.dataset.bedCleared);

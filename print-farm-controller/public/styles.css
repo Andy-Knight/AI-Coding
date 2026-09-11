@@ -340,3 +340,18 @@ input:focus,select:focus { border-color:#7a9fbe; }
 .queue-compatibility b { color:#bdcad4; }
 .queue-assignment-card { border:1px solid #2b3945; border-radius:10px; padding:11px 12px; background:#10171d; }
 .queue-assignment-card > div:not(.field-help) { margin-top:4px; color:#b9c8d3; font-size:.86rem; }
+
+
+/* Production quantity / batch queue */
+.production-batch { border-left:4px solid currentColor; }
+.production-batch.production-paused { opacity:.9; }
+.production-counts { margin-top:6px; font-size:.9rem; }
+.production-progress { height:7px; margin-top:9px; border-radius:999px; overflow:hidden; background:rgba(127,127,127,.22); }
+.production-progress > span { display:block; height:100%; background:currentColor; transition:width .2s ease; }
+.production-runs { margin-top:10px; display:grid; gap:5px; }
+.production-run { display:flex; justify-content:space-between; gap:12px; font-size:.82rem; padding:5px 0; border-top:1px solid rgba(127,127,127,.18); }
+.production-run span:last-child { text-align:right; opacity:.78; }
+.production-actions { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
+.production-quantity-control { display:flex; align-items:center; gap:6px; font-size:.82rem; }
+.production-quantity-control input { width:76px; }
+@media (max-width:760px) { .production-run { flex-direction:column; gap:2px; } .production-run span:last-child { text-align:left; } }

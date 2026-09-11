@@ -7,7 +7,7 @@
 - Repository: `Andy-Knight/AI-Coding`
 - Project path: `print-farm-controller/`
 - Branch: `main`
-- Current application version: **0.11.3**
+- Current application version: **0.12.0**
 - Runtime: **Node.js 20+**, ES modules, no npm runtime dependencies.
 - GitHub is the authoritative code baseline.
 
@@ -82,22 +82,21 @@ Manufacturer-specific discovery, capabilities, limits, status normalization, fil
 - **v0.11.2 neutral data directory:** default controller storage no longer contains `FlashForge`; existing printer registry, queue/history, staged queue files, and metadata migrate automatically to the new manufacturer-neutral directory.
 - v0.11.2 regression suite: **106 passing tests, 0 failures**, including an end-to-end legacy-directory migration test in GitHub Actions.
 - **v0.11.3 staged-file cleanup:** clearing print history immediately removes controller-staged queue files that have no remaining queue/history reference; shared/referenced files are retained.
+- **v0.12.0 production quantity / batch printing:** one staged G-code can create 2–999 run records sharing the same file; automatic scheduling can distribute copies across multiple compatible printers concurrently, with batch progress, pause/resume, cancel remaining, and safe quantity adjustment.
 
 ## Current task
 
-**v0.11.3 implementation is complete in code and automated tests.** Next priority is real-hardware validation of the **Next available compatible printer** workflow and confirmation that the one-time application-data migration preserves the user's configured fleet and queued files.
-
-Validation should confirm staging from the browser, live compatibility reasons, bed-clearance blocking, U1 tool mapping, upload/verification, final preflight, print start, cancellation during preparation, restart behaviour, and fixed-printer queue regression behaviour.
+**v0.12.0 implementation is complete in code and automated tests.** Next priority is real-hardware validation of production quantities across mixed FlashForge/Snapmaker printers, especially concurrent assignment, bed-clearance recycling, printer-local file reuse, and pause/resume behaviour.
 
 ## Next steps
 
-1. Deploy/run v0.11.3, confirm the legacy application data migrated to the neutral directory, then queue a simple known-good single-tool G-code using **+ Queue file**.
-2. Verify the UI lists eligible and blocked printers with accurate reasons before assignment.
-3. Test bed-clearance blocking by leaving one otherwise-compatible printer uncleared and confirming another eligible printer is chosen.
-4. Validate U1 material/colour/nozzle mapping with a known multi-tool file before relying on unattended multi-tool scheduling.
-5. Set each FlashForge printer's **Controller nozzle designation**, then confirm explicit staged-file nozzle matches become eligible and mismatches remain blocked; clearing the designation should return explicit-nozzle jobs to **Needs review**.
-6. Test controller restart with an unassigned automatic job and confirm it remains safely queued with the staged file intact.
-7. After hardware validation, address any observed edge cases before extending scheduling policy/fairness or adding more printer manufacturers.
+1. Queue a known-good single-tool file with quantity 4 or more and confirm multiple compatible printers receive copies concurrently.
+2. Confirm each completed printer waits for **Bed cleared** before it receives the next copy from the same production batch.
+3. Pause a production batch while copies are active and confirm active prints continue but no new copies start; then resume it.
+4. Increase and decrease the requested quantity while copies are waiting and confirm already-started/finished copies are never removed.
+5. Cancel remaining copies and confirm currently active prints continue while all waiting copies are cancelled.
+6. Confirm a printer that already has the exact filename reuses its printer-local copy rather than uploading it again.
+7. After hardware validation, consider queue priority / scheduling policy as the next scheduler milestone.
 
 ## Handoff rule
 
