@@ -459,3 +459,43 @@ test('cancelling an automatic job during staged upload cannot race into print st
   assert.equal(service.getJob(job.id).bedClearanceRequired, false);
   service.stop();
 });
+
+test('clearing history immediately prunes unreferenced staged files but keeps files still referenced', async () => {
+  const orphanId = '44444444-4444-4444-8444-444444444444';
+  const sharedId = '55555555-5555-4555-8555-555555555555';
+  const jobs = [
+    {
+      id:'done-orphan', assignmentMode:'automatic', printerId:'p1', printerName:'Printer', fileName:'orphan.gcode',
+      stagedFile:{ id:orphanId, fileName:'orphan.gcode' }, status:'completed', options:{}, queuedAt:'2026-09-11T10:00:00.000Z',
+      updatedAt:'2026-09-11T10:30:00.000Z', finishedAt:'2026-09-11T10:30:00.000Z', bedClearanceRequired:false, bedClearedAt:null
+    },
+    {
+      id:'done-shared', assignmentMode:'automatic', printerId:'p1', printerName:'Printer', fileName:'shared.gcode',
+      stagedFile:{ id:sharedId, fileName:'shared.gcode' }, status:'completed', options:{}, queuedAt:'2026-09-11T10:00:00.000Z',
+      updatedAt:'2026-09-11T10:30:00.000Z', finishedAt:'2026-09-11T10:30:00.000Z', bedClearanceRequired:false, bedClearedAt:null
+    },
+    {
+      id:'review-shared', assignmentMode:'automatic', printerId:null, printerName:'Next available compatible printer', fileName:'shared.gcode',
+      stagedFile:{ id:sharedId, fileName:'shared.gcode' }, status:'needs_review', options:{}, queuedAt:'2026-09-11T10:31:00.000Z',
+      updatedAt:'2026-09-11T10:31:00.000Z', bedClearanceRequired:false, bedClearedAt:null
+    }
+  ];
+  const store = memoryStore(jobs);
+  const pruneCalls = [];
+  const service = new PrintQueueService({
+    fleetState:new FakeFleetState([]),
+    chamberPreheat:{ isActive:() => false, stop:async () => {} },
+    loadJobsFn:store.load,
+    saveJobsFn:store.save,
+    pruneQueueFilesFn:async (referencedIds, options) => { pruneCalls.push({ referencedIds:[...referencedIds], options }); return 0; }
+  });
+  await service.start();
+  pruneCalls.length = 0;
+
+  assert.equal(await service.clearHistory(), 2);
+  assert.deepEqual(service.getSnapshot().jobs.map((job) => job.id), ['review-shared']);
+  assert.equal(pruneCalls.length, 2);
+  assert.deepEqual(pruneCalls[0], { referencedIds:[sharedId], options:undefined });
+  assert.deepEqual(pruneCalls[1], { referencedIds:[sharedId], options:{ minAgeMs:0 } });
+  service.stop();
+});

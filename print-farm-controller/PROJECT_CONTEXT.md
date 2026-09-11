@@ -7,7 +7,7 @@
 - Repository: `Andy-Knight/AI-Coding`
 - Project path: `print-farm-controller/`
 - Branch: `main`
-- Current application version: **0.11.2**
+- Current application version: **0.11.3**
 - Runtime: **Node.js 20+**, ES modules, no npm runtime dependencies.
 - GitHub is the authoritative code baseline.
 
@@ -81,16 +81,17 @@ Manufacturer-specific discovery, capabilities, limits, status normalization, fil
 - v0.11.1 regression suite: **105 passing tests, 0 failures**, including GitHub Actions verification.
 - **v0.11.2 neutral data directory:** default controller storage no longer contains `FlashForge`; existing printer registry, queue/history, staged queue files, and metadata migrate automatically to the new manufacturer-neutral directory.
 - v0.11.2 regression suite: **106 passing tests, 0 failures**, including an end-to-end legacy-directory migration test in GitHub Actions.
+- **v0.11.3 staged-file cleanup:** clearing print history immediately removes controller-staged queue files that have no remaining queue/history reference; shared/referenced files are retained.
 
 ## Current task
 
-**v0.11.2 implementation is complete in code and automated tests.** Next priority is real-hardware validation of the **Next available compatible printer** workflow and confirmation that the one-time application-data migration preserves the user's configured fleet and queued files.
+**v0.11.3 implementation is complete in code and automated tests.** Next priority is real-hardware validation of the **Next available compatible printer** workflow and confirmation that the one-time application-data migration preserves the user's configured fleet and queued files.
 
 Validation should confirm staging from the browser, live compatibility reasons, bed-clearance blocking, U1 tool mapping, upload/verification, final preflight, print start, cancellation during preparation, restart behaviour, and fixed-printer queue regression behaviour.
 
 ## Next steps
 
-1. Deploy/run v0.11.2, confirm the legacy application data migrated to the neutral directory, then queue a simple known-good single-tool G-code using **+ Queue file**.
+1. Deploy/run v0.11.3, confirm the legacy application data migrated to the neutral directory, then queue a simple known-good single-tool G-code using **+ Queue file**.
 2. Verify the UI lists eligible and blocked printers with accurate reasons before assignment.
 3. Test bed-clearance blocking by leaving one otherwise-compatible printer uncleared and confirming another eligible printer is chosen.
 4. Validate U1 material/colour/nozzle mapping with a known multi-tool file before relying on unattended multi-tool scheduling.

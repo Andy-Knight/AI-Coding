@@ -418,7 +418,11 @@ export class PrintQueueService {
   async clearHistory() {
     const before = this.jobs.length;
     this.jobs = this.jobs.filter((job) => !TERMINAL_STATES.has(job.status) || (job.bedClearanceRequired === true && !job.bedClearedAt));
-    if (this.jobs.length !== before) await this.persistAndNotify();
+    if (this.jobs.length !== before) {
+      await this.persistAndNotify();
+      const referencedIds = this.jobs.map((job) => job.stagedFile?.id).filter(Boolean);
+      await this.pruneQueueFiles(referencedIds, { minAgeMs:0 }).catch(() => {});
+    }
     return before - this.jobs.length;
   }
 
