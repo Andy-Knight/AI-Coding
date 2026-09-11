@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Printer Fleet Controller</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <div class="eyebrow">LOCAL PRINT FARM</div>
+      <div class="title-row">
+        <h1>Printer Fleet Controller</h1>
+        <span id="liveIndicator" class="live-indicator connecting"><i></i><span>Connecting</span></span>
+      </div>
+    </div>
+    <div class="topbar-actions">
+      <button id="queueBtn" class="secondary">Queue &amp; history <span id="queueButtonCount" class="queue-button-count hidden">0</span></button>
+      <button id="batchModeBtn" class="secondary">Fleet operations</button>
+      <button id="addPrinterBtn" class="primary">+ Add printer</button>
+    </div>
+  </header>
+
+  <main>
+    <section id="summary" class="summary"></section>
+    <section id="batchToolbar" class="batch-toolbar hidden" aria-label="Batch printer controls">
+      <div class="batch-toolbar-head">
+        <div><strong><span id="batchSelectedCount">0</span> selected</strong><span id="batchResult" class="batch-result"></span></div>
+        <div class="mini-actions">
+          <button type="button" class="secondary" data-batch-select-all>Select all</button>
+          <button type="button" class="secondary" data-batch-clear>Clear</button>
+        </div>
+      </div>
+      <div class="batch-actions">
+        <button type="button" class="primary" data-batch-open="distribute-file">Upload file</button>
+        <button type="button" class="secondary" data-batch-open="fans">Fans</button>
+        <button type="button" class="secondary" data-batch-open="chamber-preheat-start">Start preheat</button>
+        <button type="button" class="secondary" data-batch-direct="chamber-preheat-stop">Stop preheat</button>
+        <button type="button" class="secondary" data-batch-direct="pause">Pause prints</button>
+        <button type="button" class="secondary" data-batch-direct="resume">Resume prints</button>
+        <button type="button" class="danger" data-batch-direct="heaters-off">Heaters off</button>
+        <button type="button" class="danger" data-batch-direct="cancel">Cancel prints</button>
+      </div>
+    </section>
+    <section id="fleet" class="fleet"></section>
+    <section id="empty" class="empty hidden">
+      <h2>No printers yet</h2>
+      <p>Scan the local network for a supported printer or add one manually.</p>
+      <button class="primary" data-add-printer>Find printers</button>
+    </section>
+    <footer class="controller-footer" aria-label="Controller version">Printer Fleet Controller <span id="controllerVersion">v—</span></footer>
+  </main>
+
+  <dialog id="addPrinterDialog" class="add-dialog">
+    <form id="addPrinterForm" method="dialog">
+      <div class="dialog-head">
+        <div>
+          <div class="eyebrow">NEW DEVICE</div>
+          <h2>Add printer</h2>
+        </div>
+        <button type="button" class="icon" data-close>×</button>
+      </div>
+
+      <section class="discovery-panel">
+        <div class="discovery-heading">
+          <div>
+            <strong>Printers on this network</strong>
+            <div class="subtle">Discovery finds supported printers on the local network and fills in the connection details it can identify.</div>
+          </div>
+          <button id="scanNetworkBtn" type="button" class="secondary">Scan LAN</button>
+        </div>
+        <div id="discoveryStatus" class="subtle"></div>
+        <div id="discoveryResults" class="discovery-results"></div>
+      </section>
+
+      <div class="form-divider"><span>Printer details</span></div>
+      <label>Printer type<select name="adapterType" id="adapterTypeSelect" required></select></label>
+      <label>Name<input name="name" placeholder="Printer 01" required /></label>
+      <label>IP address / hostname<input name="host" placeholder="192.168.1.100" required /></label>
+      <div id="adapterFields"></div>
+      <div id="formError" class="error hidden"></div>
+      <div class="actions">
+        <button type="button" class="secondary" data-close>Cancel</button>
+        <button type="submit" class="primary">Test & add</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="printerDialog" class="printer-dialog">
+    <div id="printerDetail"></div>
+  </dialog>
+
+  <dialog id="queueDialog" class="queue-dialog">
+    <div class="queue-shell">
+      <div class="dialog-head">
+        <div>
+          <div class="eyebrow">FLEET SCHEDULER</div>
+          <h2>Print queue &amp; history</h2>
+          <div id="queueSummary" class="subtle">No queued prints</div>
+        </div>
+        <button type="button" class="icon" data-queue-close>×</button>
+      </div>
+      <section class="queue-section">
+        <div class="queue-section-head"><h3>Active &amp; queued</h3><span class="subtle">Jobs start automatically when their assigned printer is idle and its build plate has been confirmed clear.</span></div>
+        <div id="queueActiveList" class="queue-list"></div>
+      </section>
+      <section class="queue-section queue-history-section">
+        <div class="queue-section-head"><h3>Recent history</h3><button id="clearQueueHistoryBtn" type="button" class="secondary">Clear history</button></div>
+        <div id="queueHistoryList" class="queue-list"></div>
+      </section>
+    </div>
+  </dialog>
+
+  <dialog id="batchActionDialog" class="batch-action-dialog">
+    <form id="batchActionForm">
+      <div class="dialog-head">
+        <div>
+          <div class="eyebrow">BATCH CONTROL</div>
+          <h2 id="batchActionTitle">Batch action</h2>
+          <div id="batchActionSubtitle" class="subtle"></div>
+        </div>
+        <button type="button" class="icon" data-batch-dialog-close>×</button>
+      </div>
+      <div id="batchActionFields"></div>
+      <div id="batchActionError" class="error hidden"></div>
+      <div class="actions">
+        <button type="button" class="secondary" data-batch-dialog-close>Cancel</button>
+        <button type="submit" class="primary">Apply</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

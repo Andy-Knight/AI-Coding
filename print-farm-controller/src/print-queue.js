@@ -1,0 +1,548 @@
+import crypto from 'node:crypto';
+import path from 'node:path';
+import { getPrinter } from './store.js';
+import { getPrinterAdapter } from './adapters/adapter-registry.js';
+import { loadPrintJobs, savePrintJobs } from './queue-store.js';
+import { getPrinterFileMaterialMetadata } from './file-material-store.js';
+import { assessMaterialCompatibility } from './file-material-metadata.js';
+
+const TERMINAL_STATES = new Set(['completed', 'failed', 'cancelled']);
+const ACTIVE_PRINTER_STATES = new Set(['printing', 'working', 'building_from_sd', 'pause', 'paused']);
+const ERROR_PRINTER_STATES = new Set(['error', 'failed']);
+const START_TIMEOUT_MS = 60_000;
+const MIN_ACTIVE_MS = 1_500;
+const MAX_HISTORY = 250;
+
+const nowIso = () => new Date().toISOString();
+const nowMs = () => Date.now();
+
+function normalizeState(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function basename(value) {
+  return path.posix.basename(String(value || '').replace(/\\/g, '/')).toLowerCase();
+}
+
+function printIsActive(status = {}) {
+  const state = normalizeState(status.status);
+  if (ACTIVE_PRINTER_STATES.has(state)) return true;
+  // Heating without a filename may be chamber preheat or manual heating.
+  if (state === 'heating') return Boolean(status.fileName);
+  return false;
+}
+
+function printerCanStart(status = {}) {
+  const state = normalizeState(status.status);
+  if (status.fileName || printIsActive(status)) return false;
+  return ['', 'idle', 'ready', 'standby', 'complete', 'completed'].includes(state);
+}
+
+function matchesFile(status = {}, fileName) {
+  if (!status.fileName || !fileName) return false;
+  return basename(status.fileName) === basename(fileName);
+}
+
+function publicJob(job) {
+  return {
+    id: job.id,
+    printerId: job.printerId,
+    printerName: job.printerName,
+    fileName: job.fileName,
+    status: job.status,
+    options: { ...(job.options || {}) },
+    queuedAt: job.queuedAt,
+    startRequestedAt: job.startRequestedAt || null,
+    startedAt: job.startedAt || null,
+    finishedAt: job.finishedAt || null,
+    updatedAt: job.updatedAt,
+    error: job.error || null,
+    maxProgress: Number(job.maxProgress || 0),
+    lastPrinterState: job.lastPrinterState || null,
+    bedClearanceRequired: job.bedClearanceRequired === true,
+    bedClearedAt: job.bedClearedAt || null,
+    fileMaterial: job.fileMaterial ? { ...job.fileMaterial, materials: Array.isArray(job.fileMaterial.materials) ? [...job.fileMaterial.materials] : [] } : null
+  };
+}
+
+function sanitizeOptions(options = {}) {
+  const result = {
+    levelingBeforePrint: options.levelingBeforePrint !== false,
+    flowCalibrationBeforePrint: options.flowCalibrationBeforePrint === true,
+    toolMap: options.toolMap && typeof options.toolMap === 'object' ? { ...options.toolMap } : null,
+    usedLogicalTools: Array.isArray(options.usedLogicalTools) ? options.usedLogicalTools.map(Number).filter(Number.isFinite) : []
+  };
+  for (const key of ['timeLapseBeforePrint', 'autoReplenishFilament', 'filamentEntangleDetect']) {
+    if (typeof options[key] === 'boolean') result[key] = options[key];
+  }
+  if (options.filamentEntangleSensitivity != null) result.filamentEntangleSensitivity = String(options.filamentEntangleSensitivity);
+  return result;
+}
+
+function normalizedColor(value) {
+  const text = String(value || '').trim().toUpperCase();
+  return /^#[0-9A-F]{6}$/.test(text) ? text : null;
+}
+
+function normalizedMaterial(value) {
+  return String(value || '').trim().toUpperCase().replace(/[^A-Z0-9+_-]/g, '') || null;
+}
+
+function buildToolSnapshot(state, toolMap) {
+  if (!toolMap || typeof toolMap !== 'object') return [];
+  const tools = Array.isArray(state?.status?.tools) ? state.status.tools : [];
+  return Object.entries(toolMap).map(([logicalIndex, physicalIndex]) => {
+    const physical = tools.find((tool) => Number(tool.index) === Number(physicalIndex));
+    if (!physical) return { logicalIndex:Number(logicalIndex), physicalIndex:Number(physicalIndex), missing:true };
+    const filament = physical.filament || {};
+    return {
+      logicalIndex:Number(logicalIndex),
+      physicalIndex:Number(physicalIndex),
+      present: typeof filament.present === 'boolean' ? filament.present : null,
+      color: normalizedColor(filament.color),
+      material: normalizedMaterial(filament.material),
+      nozzleDiameter: Number.isFinite(Number(physical.nozzleDiameter)) ? Number(physical.nozzleDiameter) : null
+    };
+  });
+}
+
+function checkToolSnapshot(snapshot, status) {
+  if (!Array.isArray(snapshot) || !snapshot.length) return [];
+  const tools = Array.isArray(status?.tools) ? status.tools : [];
+  const problems = [];
+  for (const expected of snapshot) {
+    const tool = tools.find((item) => Number(item.index) === Number(expected.physicalIndex));
+    if (!tool) {
+      problems.push(`Physical T${expected.physicalIndex} is no longer reporting status`);
+      continue;
+    }
+    const filament = tool.filament || {};
+    if (expected.present === true && filament.present === false) problems.push(`Physical T${expected.physicalIndex} no longer has filament loaded`);
+    const currentColor = normalizedColor(filament.color);
+    if (expected.color && currentColor !== expected.color) problems.push(`Physical T${expected.physicalIndex} filament colour changed`);
+    const currentMaterial = normalizedMaterial(filament.material);
+    if (expected.material && currentMaterial !== expected.material) problems.push(`Physical T${expected.physicalIndex} material changed`);
+    const currentNozzle = Number(tool.nozzleDiameter);
+    if (expected.nozzleDiameter != null && (!Number.isFinite(currentNozzle) || Math.abs(currentNozzle - expected.nozzleDiameter) >= 0.001)) {
+      problems.push(`Physical T${expected.physicalIndex} nozzle changed from ${expected.nozzleDiameter.toFixed(1)} mm`);
+    }
+  }
+  return [...new Set(problems)];
+}
+
+
+export class PrintQueueService {
+  constructor({
+    fleetState,
+    chamberPreheat,
+    getPrinterFn = getPrinter,
+    adapterResolver = getPrinterAdapter,
+    loadJobsFn = loadPrintJobs,
+    saveJobsFn = savePrintJobs,
+    getFileMaterialMetadataFn = getPrinterFileMaterialMetadata,
+    onChange = null,
+    startTimeoutMs = START_TIMEOUT_MS,
+    minActiveMs = MIN_ACTIVE_MS
+  } = {}) {
+    if (!fleetState) throw new Error('fleetState is required');
+    if (!chamberPreheat) throw new Error('chamberPreheat is required');
+    this.fleetState = fleetState;
+    this.chamberPreheat = chamberPreheat;
+    this.getPrinter = getPrinterFn;
+    this.adapterResolver = adapterResolver;
+    this.loadJobs = loadJobsFn;
+    this.saveJobs = saveJobsFn;
+    this.getFileMaterialMetadata = getFileMaterialMetadataFn;
+    this.onChange = onChange;
+    this.startTimeoutMs = startTimeoutMs;
+    this.minActiveMs = minActiveMs;
+    this.jobs = [];
+    this.unsubscribe = null;
+    this.processing = false;
+    this.pendingReconcile = false;
+    this.startingPrinters = new Set();
+    this.saveChain = Promise.resolve();
+  }
+
+  async start() {
+    this.jobs = (await this.loadJobs()).map((job) => ({
+      ...job,
+      options: sanitizeOptions(job.options || {}),
+      bedClearanceRequired: job.bedClearanceRequired === true,
+      bedClearedAt: job.bedClearedAt || null
+    }));
+    this.unsubscribe = this.fleetState.subscribe(() => this.scheduleReconcile());
+    this.notify();
+    this.scheduleReconcile();
+  }
+
+  stop() {
+    this.unsubscribe?.();
+    this.unsubscribe = null;
+  }
+
+  getSnapshot() {
+    const jobs = this.jobs.map((job) => {
+      const currentName = this.fleetState.getPrinterState(job.printerId)?.name;
+      return publicJob(currentName ? { ...job, printerName: currentName } : job);
+    });
+    const bedClearance = this.getBedClearance();
+    return {
+      jobs,
+      queued: jobs.filter((job) => job.status === 'queued').length,
+      active: jobs.filter((job) => job.status === 'starting' || job.status === 'printing').length,
+      history: jobs.filter((job) => TERMINAL_STATES.has(job.status)).length,
+      needsReview: jobs.filter((job) => job.status === 'needs_review').length,
+      awaitingClearance: bedClearance.length,
+      bedClearance
+    };
+  }
+
+  getBedClearance() {
+    const pending = new Map();
+    for (const job of this.jobs) {
+      if (!job.bedClearanceRequired || job.bedClearedAt) continue;
+      const existing = pending.get(job.printerId);
+      if (!existing || new Date(job.finishedAt || job.updatedAt || 0).getTime() > new Date(existing.finishedAt || existing.updatedAt || 0).getTime()) {
+        pending.set(job.printerId, job);
+      }
+    }
+    return [...pending.values()].map((job) => ({
+      printerId: job.printerId,
+      printerName: this.fleetState.getPrinterState(job.printerId)?.name || job.printerName,
+      jobId: job.id,
+      fileName: job.fileName,
+      jobStatus: job.status,
+      finishedAt: job.finishedAt || job.updatedAt || null
+    }));
+  }
+
+  requiresBedClearance(printerId) {
+    return this.jobs.some((job) => job.printerId === printerId && job.bedClearanceRequired === true && !job.bedClearedAt);
+  }
+
+  async clearBed(printerId) {
+    const pending = this.jobs.filter((job) => job.printerId === printerId && job.bedClearanceRequired === true && !job.bedClearedAt);
+    if (!pending.length) throw new Error('This printer is not waiting for bed clearance');
+    const clearedAt = nowIso();
+    for (const job of pending) {
+      job.bedClearedAt = clearedAt;
+      job.updatedAt = clearedAt;
+    }
+    await this.persistAndNotify();
+    this.scheduleReconcile();
+    return { printerId, clearedAt, clearedJobs: pending.map((job) => job.id) };
+  }
+
+  getJob(id) {
+    const job = this.jobs.find((item) => item.id === id);
+    return job ? publicJob(job) : null;
+  }
+
+  async add({ printerId, fileName, options = {} } = {}) {
+    const printer = await this.getPrinter(String(printerId || ''));
+    if (!printer) throw new Error('Printer not found');
+    const adapter = this.adapterResolver(printer);
+    if (!adapter.capabilities?.printLocalFile) throw new Error('Printing local files is not supported by this printer');
+    const cleanFileName = String(fileName || '').trim();
+    if (!cleanFileName) throw new Error('fileName is required');
+
+    const liveState = this.fleetState.getPrinterState(printer.id);
+    if (adapter.capabilities?.printToolMapping) {
+      if (!liveState?.online || !Array.isArray(liveState.status?.tools) || !liveState.status.tools.length) {
+        throw new Error('Live U1 toolhead status is required before queueing a mapped print');
+      }
+      const requiredLogical = Array.isArray(options.usedLogicalTools) ? options.usedLogicalTools.map(Number).filter(Number.isFinite) : [];
+      for (const logicalIndex of requiredLogical) {
+        if (options.toolMap?.[logicalIndex] === undefined && options.toolMap?.[String(logicalIndex)] === undefined) {
+          throw new Error(`Queued U1 print is missing a physical head mapping for file T${logicalIndex}`);
+        }
+      }
+    }
+    const toolSnapshot = adapter.capabilities?.printToolMapping ? buildToolSnapshot(liveState, options.toolMap) : [];
+    let fileMaterial = null;
+    try {
+      fileMaterial = await this.getFileMaterialMetadata(printer.id, cleanFileName);
+    } catch {
+      fileMaterial = null;
+    }
+
+    const job = {
+      id: crypto.randomUUID(),
+      printerId: printer.id,
+      printerName: printer.name,
+      fileName: cleanFileName,
+      options: sanitizeOptions(options),
+      toolSnapshot,
+      fileMaterial,
+      status: 'queued',
+      queuedAt: nowIso(),
+      startRequestedAt: null,
+      startedAt: null,
+      finishedAt: null,
+      updatedAt: nowIso(),
+      error: null,
+      maxProgress: 0,
+      lastPrinterState: null,
+      bedClearanceRequired: false,
+      bedClearedAt: null
+    };
+    this.jobs.push(job);
+    await this.persistAndNotify();
+    this.scheduleReconcile();
+    return publicJob(job);
+  }
+
+  async reprint(id) {
+    const source = this.jobs.find((job) => job.id === id);
+    if (!source) throw new Error('Print history item not found');
+    return this.add({ printerId: source.printerId, fileName: source.fileName, options: source.options });
+  }
+
+  async recheck(id) {
+    const job = this.jobs.find((item) => item.id === id);
+    if (!job) throw new Error('Queued print not found');
+    if (job.status !== 'needs_review') throw new Error('This queued print is not waiting for review');
+    const printer = await this.getPrinter(job.printerId);
+    if (!printer) throw new Error('Printer not found');
+    let metadata = job.fileMaterial || null;
+    try {
+      metadata = await this.getFileMaterialMetadata(job.printerId, job.fileName) || metadata;
+    } catch {}
+    job.fileMaterial = metadata;
+    const materialCheck = assessMaterialCompatibility(printer.adapterConfig?.filamentDesignation, metadata || {});
+    if (materialCheck.mismatch) {
+      job.error = `Needs review: file requires ${materialCheck.requiredMaterial}, but this printer is manually designated ${materialCheck.designatedMaterial}. Change the designation or cancel the queued job.`;
+      job.updatedAt = nowIso();
+      await this.persistAndNotify();
+      return publicJob(job);
+    }
+    job.status = 'queued';
+    job.error = null;
+    job.updatedAt = nowIso();
+    await this.persistAndNotify();
+    this.scheduleReconcile();
+    return publicJob(job);
+  }
+
+  async cancel(id, { cancelPrinter = true } = {}) {
+    const job = this.jobs.find((item) => item.id === id);
+    if (!job) throw new Error('Queued print not found');
+    if (TERMINAL_STATES.has(job.status)) return publicJob(job);
+
+    const mayHavePrintOnBed = job.status === 'starting' || job.status === 'printing';
+    if (cancelPrinter && mayHavePrintOnBed) {
+      const printer = await this.getPrinter(job.printerId);
+      if (!printer) throw new Error('Printer not found');
+      const adapter = this.adapterResolver(printer);
+      if (!adapter.capabilities?.jobControl) throw new Error('Job control is not supported by this printer');
+      await adapter.setJobState('cancel');
+    }
+
+    this.markTerminal(job, 'cancelled', null, { requireBedClearance: mayHavePrintOnBed });
+    await this.persistAndNotify();
+    this.scheduleReconcile();
+    return publicJob(job);
+  }
+
+  async noteExternalCancel(printerId) {
+    const job = this.jobs.find((item) => item.printerId === printerId && (item.status === 'starting' || item.status === 'printing'));
+    if (!job) return null;
+    this.markTerminal(job, 'cancelled', null, { requireBedClearance: true });
+    await this.persistAndNotify();
+    return publicJob(job);
+  }
+
+  async clearHistory() {
+    const before = this.jobs.length;
+    this.jobs = this.jobs.filter((job) => !TERMINAL_STATES.has(job.status) || (job.bedClearanceRequired === true && !job.bedClearedAt));
+    if (this.jobs.length !== before) await this.persistAndNotify();
+    return before - this.jobs.length;
+  }
+
+  async reorder(jobIds) {
+    const queued = this.jobs.filter((job) => job.status === 'queued');
+    const requested = Array.isArray(jobIds) ? [...new Set(jobIds.map(String))] : [];
+    if (requested.length !== queued.length || requested.some((id) => !queued.some((job) => job.id === id))) {
+      throw new Error('Queue order must include every queued job exactly once');
+    }
+    const positions = new Map(requested.map((id, index) => [id, index]));
+    const queuedSorted = [...queued].sort((a, b) => positions.get(a.id) - positions.get(b.id));
+    let queueIndex = 0;
+    this.jobs = this.jobs.map((job) => job.status === 'queued' ? queuedSorted[queueIndex++] : job);
+    await this.persistAndNotify();
+    this.scheduleReconcile();
+    return this.getSnapshot();
+  }
+
+  scheduleReconcile() {
+    if (this.processing) {
+      this.pendingReconcile = true;
+      return;
+    }
+    queueMicrotask(() => this.reconcile().catch((error) => console.error('Print queue reconcile error:', error)));
+  }
+
+  async reconcile() {
+    if (this.processing) {
+      this.pendingReconcile = true;
+      return;
+    }
+    this.processing = true;
+    let changed = false;
+    try {
+      const fleet = new Map(this.fleetState.getFleet().map((state) => [state.id, state]));
+      for (const job of this.jobs) {
+        if (job.status !== 'starting' && job.status !== 'printing') continue;
+        const state = fleet.get(job.printerId);
+        if (!state?.online || !state.status) continue;
+        const printerStatus = state.status;
+        const stateName = normalizeState(printerStatus.status);
+        job.lastPrinterState = stateName || null;
+        const progress = Number(printerStatus.progress || 0);
+        if (Number.isFinite(progress)) job.maxProgress = Math.max(Number(job.maxProgress || 0), progress);
+
+        if (job.status === 'starting') {
+          if (matchesFile(printerStatus, job.fileName) || (printIsActive(printerStatus) && !printerStatus.fileName)) {
+            job.status = 'printing';
+            job.startedAt = job.startedAt || nowIso();
+            job.updatedAt = nowIso();
+            changed = true;
+          } else if (job.startRequestedAt && nowMs() - new Date(job.startRequestedAt).getTime() > this.startTimeoutMs) {
+            this.markTerminal(job, 'failed', 'Printer did not report the queued print starting', { requireBedClearance: true });
+            changed = true;
+          }
+          continue;
+        }
+
+        if (['cancel', 'cancelled', 'canceled', 'stopped'].includes(stateName)) {
+          this.markTerminal(job, 'cancelled', null, { requireBedClearance: true });
+          changed = true;
+          continue;
+        }
+        if (ERROR_PRINTER_STATES.has(stateName)) {
+          this.markTerminal(job, 'failed', `Printer reported ${stateName}`, { requireBedClearance: true });
+          changed = true;
+          continue;
+        }
+        if (printIsActive(printerStatus) && printerStatus.fileName && !matchesFile(printerStatus, job.fileName)) {
+          this.markTerminal(job, 'completed', null, { requireBedClearance: true });
+          changed = true;
+          continue;
+        }
+        const startedMs = new Date(job.startedAt || job.startRequestedAt || 0).getTime();
+        if (!printIsActive(printerStatus) && nowMs() - startedMs >= this.minActiveMs) {
+          this.markTerminal(job, 'completed', null, { requireBedClearance: true });
+          changed = true;
+        }
+      }
+
+      // One active queue job per printer. A queued job is started only while the
+      // printer reports idle/no active filename; manually-started jobs therefore
+      // naturally block queue progression until they finish.
+      for (const state of fleet.values()) {
+        if (!state.online || !state.status) continue;
+        if (this.startingPrinters.has(state.id)) continue;
+        if (this.requiresBedClearance(state.id)) continue;
+        if (!printerCanStart(state.status)) continue;
+        if (this.jobs.some((job) => job.printerId === state.id && (job.status === 'starting' || job.status === 'printing'))) continue;
+        const next = this.jobs.find((job) => job.printerId === state.id && (job.status === 'queued' || job.status === 'needs_review'));
+        if (next?.status === 'queued') this.startJob(next).catch((error) => console.error('Queued print start failed:', error));
+      }
+
+      if (changed) await this.persistAndNotify();
+    } finally {
+      this.processing = false;
+      if (this.pendingReconcile) {
+        this.pendingReconcile = false;
+        this.scheduleReconcile();
+      }
+    }
+  }
+
+  async startJob(job) {
+    if (!job || job.status !== 'queued' || this.startingPrinters.has(job.printerId) || this.requiresBedClearance(job.printerId)) return;
+    this.startingPrinters.add(job.printerId);
+    try {
+      if (this.requiresBedClearance(job.printerId)) return;
+      const state = this.fleetState.getPrinterState(job.printerId);
+      if (!state?.online || !state.status || !printerCanStart(state.status)) return;
+      const printer = await this.getPrinter(job.printerId);
+      if (!printer) throw new Error('Printer not found');
+      const adapter = this.adapterResolver(printer);
+      if (!adapter.capabilities?.printLocalFile) throw new Error('Printing local files is not supported by this printer');
+      const freshStatus = await adapter.getStatus();
+      if (!printerCanStart(freshStatus)) return;
+      let latestFileMaterial = job.fileMaterial || null;
+      try {
+        latestFileMaterial = await this.getFileMaterialMetadata(job.printerId, job.fileName) || latestFileMaterial;
+      } catch {}
+      job.fileMaterial = latestFileMaterial;
+      const materialCheck = assessMaterialCompatibility(printer.adapterConfig?.filamentDesignation, latestFileMaterial || {});
+      if (materialCheck.mismatch) {
+        job.status = 'needs_review';
+        job.error = `Needs review: file requires ${materialCheck.requiredMaterial}, but this printer is manually designated ${materialCheck.designatedMaterial}. Change the designation, then recheck this queued job.`;
+        job.updatedAt = nowIso();
+        await this.persistAndNotify();
+        return;
+      }
+      if (adapter.capabilities?.printToolMapping && Array.isArray(job.toolSnapshot) && job.toolSnapshot.length) {
+        const problems = checkToolSnapshot(job.toolSnapshot, freshStatus);
+        if (problems.length) {
+          throw new Error(`U1 toolhead state changed since this job was queued: ${problems.join('; ')}. Review Print setup and queue the job again.`);
+        }
+      }
+      if (this.chamberPreheat.isActive(job.printerId)) {
+        await this.chamberPreheat.stop(job.printerId, { reason: 'queued-print-started', turnOff: false });
+      }
+
+      job.status = 'starting';
+      job.startRequestedAt = nowIso();
+      job.updatedAt = nowIso();
+      job.error = null;
+      await this.persistAndNotify();
+
+      await adapter.printLocalFile(job.fileName, sanitizeOptions(job.options));
+      await this.fleetState.refreshNow(job.printerId).catch(() => {});
+    } catch (error) {
+      this.markTerminal(job, 'failed', error.message || 'Queued print failed to start', { requireBedClearance: job.status === 'starting' });
+      await this.persistAndNotify();
+    } finally {
+      this.startingPrinters.delete(job.printerId);
+      this.scheduleReconcile();
+    }
+  }
+
+  markTerminal(job, status, error, { requireBedClearance = false } = {}) {
+    job.status = status;
+    job.error = error || null;
+    job.finishedAt = nowIso();
+    job.updatedAt = job.finishedAt;
+    job.bedClearanceRequired = requireBedClearance === true;
+    job.bedClearedAt = requireBedClearance ? null : (job.bedClearedAt || null);
+    this.trimHistory();
+  }
+
+  trimHistory() {
+    const removableTerminal = this.jobs.filter((job) => TERMINAL_STATES.has(job.status) && !(job.bedClearanceRequired === true && !job.bedClearedAt));
+    const pendingClearanceCount = this.jobs.filter((job) => TERMINAL_STATES.has(job.status) && job.bedClearanceRequired === true && !job.bedClearedAt).length;
+    const removableLimit = Math.max(0, MAX_HISTORY - pendingClearanceCount);
+    if (removableTerminal.length <= removableLimit) return;
+    const remove = new Set(removableTerminal.slice(0, removableTerminal.length - removableLimit).map((job) => job.id));
+    this.jobs = this.jobs.filter((job) => !remove.has(job.id));
+  }
+
+  async persistAndNotify() {
+    const snapshot = structuredClone(this.jobs);
+    const save = this.saveChain.then(() => this.saveJobs(snapshot));
+    this.saveChain = save.catch(() => {});
+    await save;
+    this.notify();
+  }
+
+  notify() {
+    try { this.onChange?.(this.getSnapshot()); } catch {}
+  }
+}
+
+export const printQueueHelpers = { printIsActive, printerCanStart, matchesFile, sanitizeOptions, buildToolSnapshot, checkToolSnapshot };
