@@ -1,4 +1,6 @@
-# Printer Fleet Controller v0.11.1
+# Printer Fleet Controller v0.11.2
+
+> v0.11.2 moves the default controller application-data directory to a manufacturer-neutral **Printer Fleet Controller** path. Existing data is migrated automatically from the historical `FlashForge Fleet` directory on first startup, including printer configuration, queue/history, staged queue files, and material metadata. Custom `DATA_DIR` locations are unchanged.
 
 > v0.11.1 adds a persistent **Controller nozzle designation** for FlashForge 5M-family printers. Set the installed nozzle diameter in Toolhead status so file-centric automatic queue compatibility can safely match staged G-code nozzle requirements instead of holding FlashForge jobs for review when the local API cannot report nozzle size.
 
@@ -9,7 +11,7 @@ A local-first 3D printer fleet controller. It runs entirely on your LAN and curr
 - **FlashForge Adventurer 5M / 5M Pro** through the local FlashForge HTTP/TCP APIs.
 - **Snapmaker U1** through its local Moonraker/Klipper API.
 
-The application is now named **Printer Fleet Controller**. Existing installations continue to use the legacy application-data directory so upgrades do not lose already configured printers.
+The application is named **Printer Fleet Controller**. From v0.11.2 the default application-data directory is manufacturer-neutral; existing installations are migrated automatically from the historical FlashForge-named directory so configured printers and queued work are retained.
 
 ## Run
 
@@ -177,24 +179,24 @@ After any queued job reaches the printer and then completes, fails, or is cancel
 
 ## Application data
 
-Existing configuration remains in the same legacy location as earlier versions so upgrades do not require re-adding printers. The historical `Print Controller/FlashForge Fleet` directory name is intentionally retained for backward compatibility. Queue/history is stored in `print-jobs.json`, and remembered per-printer file material metadata is stored in `file-material-metadata.json` in the same directory.
+The default application-data directory is now manufacturer-neutral. On first v0.11.2 startup, if the new directory does not yet exist but the historical `FlashForge Fleet` directory does, the controller migrates the complete directory before fleet and queue startup. That preserves `printers.json`, `print-jobs.json`, `file-material-metadata.json`, staged `queue-files/`, and other controller state. A custom `DATA_DIR` is used exactly as configured and is not migrated.
 
 Windows:
 
 ```text
-%LOCALAPPDATA%\Print Controller\FlashForge Fleet\printers.json
+%LOCALAPPDATA%\Print Controller\Printer Fleet Controller\printers.json
 ```
 
 macOS:
 
 ```text
-~/Library/Application Support/Print Controller/FlashForge Fleet/printers.json
+~/Library/Application Support/Print Controller/Printer Fleet Controller/printers.json
 ```
 
 Linux:
 
 ```text
-~/.local/share/print-controller/flashforge-fleet/printers.json
+~/.local/share/print-controller/printer-fleet-controller/printers.json
 ```
 
 The persistent fleet print queue/history is stored beside the printer registry as `print-jobs.json`. Controller-staged automatic-queue files are stored under the sibling `queue-files/` directory with metadata, SHA-256 and parsed print requirements. These are intentionally separate from `printers.json`, so clearing print history cannot remove configured printers. Queued jobs survive a normal controller restart; interrupted automatic upload/preflight work returns safely to the queue, while jobs already handed to a printer are reconciled against live printer state. Build-plate clearance is persisted on the completed queue record, so restarting the controller or clearing ordinary history cannot accidentally release a printer that is still waiting for its bed to be cleared.
