@@ -1,0 +1,116 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {
+  FLASHFORGE_AD5M_ADAPTER_TYPE,
+  getPrinterAdapter,
+  listAdapterDefinitions,
+  preparePrinterConfig,
+  registerPrinterAdapter
+} from '../src/adapters/adapter-registry.js';
+import { PrinterAdapter, normalizeCapabilities } from '../src/adapters/printer-adapter.js';
+
+test('FlashForge AD5M adapter exposes the current controller capabilities and limits', () => {
+  const adapter = getPrinterAdapter({
+    id: 'p1',
+    adapterType: FLASHFORGE_AD5M_ADAPTER_TYPE,
+    host: '192.168.1.20',
+    serialNumber: 'SN',
+    checkCode: 'CODE',
+    model: 'Adventurer 5M Pro'
+  });
+
+  assert.equal(adapter.type, 'flashforge-ad5m');
+  assert.equal(adapter.manufacturer, 'FlashForge');
+  assert.equal(adapter.capabilities.fileUpload, true);
+  assert.equal(adapter.capabilities.camera, true);
+  assert.equal(adapter.capabilities.chamberPreheat, true);
+  assert.equal(adapter.capabilities.materialStatus, true);
+  assert.equal(adapter.capabilities.materialDesignation, true);
+  assert.equal(adapter.limits.bedTemperature.max, 110);
+  assert.equal(adapter.limits.nozzleTemperature.max, 265);
+});
+
+test('FlashForge connection validation belongs to the adapter definition', () => {
+  const config = preparePrinterConfig({
+    adapterType: 'flashforge-ad5m',
+    name: 'Printer 1',
+    host: 'http://192.168.1.25/',
+    serialNumber: ' SN123 ',
+    checkCode: ' ABCD ',
+    model: 'Adventurer 5M Pro'
+  });
+
+  assert.equal(config.host, '192.168.1.25');
+  assert.equal(config.serialNumber, 'SN123');
+  assert.equal(config.checkCode, 'ABCD');
+  assert.equal(config.adapterType, 'flashforge-ad5m');
+  assert.throws(() => preparePrinterConfig({ adapterType:'flashforge-ad5m', name:'Bad', host:'192.168.1.2' }), /serialNumber and checkCode/);
+});
+
+test('Snapmaker U1 exposes print tool mapping and flow-calibration capabilities', () => {
+  const adapter = getPrinterAdapter({
+    id:'u1', adapterType:'snapmaker-u1', host:'192.168.1.90', httpPort:7125,
+    manufacturer:'Snapmaker', model:'U1', adapterConfig:{}
+  });
+  assert.equal(adapter.capabilities.printToolMapping, true);
+  assert.equal(adapter.capabilities.flowCalibrationBeforePrint, true);
+  assert.equal(adapter.capabilities.levelBeforePrint, true);
+  assert.equal(adapter.capabilities.timeLapseBeforePrint, true);
+  assert.equal(adapter.capabilities.autoFilamentReplenishment, true);
+  assert.equal(adapter.capabilities.filamentEntanglementDetection, true);
+  assert.equal(adapter.capabilities.toolheadNozzleStatus, true);
+  assert.equal(adapter.capabilities.toolheadOffsetCalibration, true);
+  assert.equal(adapter.limits.toolCount, 4);
+});
+
+test('a new printer family can register without changing fleet services', () => {
+  class ExampleAdapter extends PrinterAdapter {
+    get type() { return 'example-test-adapter'; }
+    get capabilities() { return normalizeCapabilities({ status:true, bedTemperature:true }); }
+    get limits() { return { bedTemperature:{ min:0, max:130 } }; }
+    async getStatus() { return { status:'ready', bed:{ actual:25, target:0 } }; }
+  }
+
+  registerPrinterAdapter({
+    type: 'example-test-adapter',
+    manufacturer: 'Example',
+    label: 'Example test printer',
+    capabilities: normalizeCapabilities({ status:true, bedTemperature:true }),
+    prepareConfig: (input) => ({
+      name: String(input.name || '').trim(),
+      host: String(input.host || '').trim(),
+      adapterType: 'example-test-adapter',
+      manufacturer: 'Example',
+      model: 'Example 130'
+    }),
+    create: (printer) => new ExampleAdapter(printer)
+  });
+
+  const adapter = getPrinterAdapter({ id:'x', adapterType:'example-test-adapter', host:'10.0.0.5' });
+  assert.equal(adapter.limits.bedTemperature.max, 130);
+  assert.equal(adapter.capabilities.camera, false);
+  assert.ok(listAdapterDefinitions().some((definition) => definition.type === 'example-test-adapter'));
+});
+
+
+test('FlashForge manual material designation overrides display value while retaining printer report', async () => {
+  const originalFetch = global.fetch;
+  global.fetch = async () => ({
+    ok:true,
+    async json() { return { code:0, detail:{ status:'ready', rightFilamentType:'PLA' } }; }
+  });
+  try {
+    const adapter = getPrinterAdapter({
+      id:'p-material', adapterType:FLASHFORGE_AD5M_ADAPTER_TYPE, host:'192.168.1.21',
+      serialNumber:'SN', checkCode:'CODE', adapterConfig:{ filamentDesignation:'PETG' }
+    });
+    const status = await adapter.getStatus();
+    const filament = status.tools[0].filament;
+    assert.equal(filament.material, 'PETG');
+    assert.equal(filament.materialSource, 'manual');
+    assert.equal(filament.manuallyAssigned, true);
+    assert.equal(filament.reportedMaterial, 'PLA');
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
