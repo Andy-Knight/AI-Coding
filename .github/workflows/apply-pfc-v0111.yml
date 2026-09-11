@@ -21,7 +21,7 @@ jobs:
           fetch-depth: 0
 
       - name: Apply nozzle designation update
-        run: python .pfc-update/apply-nozzle-designation.py
+        run: python .pfc-update/run-nozzle-v2.py
 
       - name: Run Printer Fleet Controller tests
         working-directory: print-farm-controller
