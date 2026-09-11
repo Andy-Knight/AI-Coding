@@ -15,7 +15,7 @@ async function loadStoreInTempDir() {
 }
 
 test('persistent queue file staging stores hash, requirements and exact bytes', async () => {
-  const { dir, stageQueueFile, getQueueFile, removeQueueFile } = await loadStoreInTempDir();
+  const { dir, stageQueueFile, getQueueFile, removeQueueFile, pruneQueueFiles } = await loadStoreInTempDir();
   const source = path.join(dir, 'source.gcode');
   const content = '; filament_type = PLA\n; filament_colour = #FF0000\n; nozzle_diameter = 0.4\nT0\nG1 X10\n';
   await fs.writeFile(source, content);
@@ -32,5 +32,9 @@ test('persistent queue file staging stores hash, requirements and exact bytes', 
   assert.equal(await fs.readFile(resolved.filePath, 'utf8'), content);
   await removeQueueFile(staged.id);
   await assert.rejects(() => getQueueFile(staged.id));
+
+  const orphan = await stageQueueFile(source, 'orphan.gcode');
+  await pruneQueueFiles([], { minAgeMs:0 });
+  await assert.rejects(() => getQueueFile(orphan.id));
   await fs.rm(dir, { recursive:true, force:true });
 });

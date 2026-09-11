@@ -1,4 +1,6 @@
-# Printer Fleet Controller v0.11.2
+# Printer Fleet Controller v0.11.3
+
+> v0.11.3 makes **Clear history** immediately delete controller-staged queue files that are no longer referenced. Files still referenced by queued/active/review jobs, retained bed-clearance records, or another history item are preserved. The normal one-hour orphan grace period remains in place for non-explicit cleanup paths.
 
 > v0.11.2 moves the default controller application-data directory to a manufacturer-neutral **Printer Fleet Controller** path. Existing data is migrated automatically from the historical `FlashForge Fleet` directory on first startup, including printer configuration, queue/history, staged queue files, and material metadata. Custom `DATA_DIR` locations are unchanged.
 
