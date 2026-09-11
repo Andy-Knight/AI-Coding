@@ -499,3 +499,180 @@ test('clearing history immediately prunes unreferenced staged files but keeps fi
   assert.deepEqual(pruneCalls[1], { referencedIds:[sharedId], options:{ minAgeMs:0 } });
   service.stop();
 });
+
+
+test('automatic production quantity creates shared staged runs and fills multiple compatible printers', async () => {
+  const fleetState = new FakeFleetState([
+    { id:'p1', name:'Printer 1', online:true, status:{ status:'idle', fileName:null, tools:[{ index:0, filament:{} }] } },
+    { id:'p2', name:'Printer 2', online:true, status:{ status:'idle', fileName:null, tools:[{ index:0, filament:{} }] } }
+  ]);
+  const store = memoryStore();
+  const staged = {
+    id:'66666666-6666-4666-8666-666666666666', fileName:'batch.gcode', filePath:'/staged/batch.gcode', size:10, sha256:'d'.repeat(64), stagedAt:new Date().toISOString(),
+    requirements:{ requiredTools:[0], toolCount:1, usageReliable:true, logicalTools:[{ index:0 }], materialMetadata:{ metadataAvailable:false, requiredMaterial:null, materials:[] } }
+  };
+  const uploaded = new Set();
+  const starts = [];
+  const service = new PrintQueueService({
+    fleetState,
+    chamberPreheat:{ isActive:() => false, stop:async () => {} },
+    getPrinterFn:async (id) => ({ id, name:id === 'p1' ? 'Printer 1' : 'Printer 2' }),
+    adapterResolver:(printer) => ({
+      capabilities:{ fileUpload:true, localFiles:true, printLocalFile:true }, limits:{ toolCount:1 }, uploadExtensions:['.gcode'],
+      getStatus:async () => fleetState.getPrinterState(printer.id).status,
+      verifyFile:async () => ({ verified:uploaded.has(printer.id), source:'test' }),
+      uploadFile:async () => { uploaded.add(printer.id); },
+      printLocalFile:async (fileName) => { starts.push({ id:printer.id, fileName }); }
+    }),
+    loadJobsFn:store.load,
+    saveJobsFn:store.save,
+    getQueueFileFn:async () => staged,
+    pruneQueueFilesFn:async () => 0,
+    saveFileMaterialMetadataFn:async () => {}
+  });
+  await service.start();
+  const first = await service.add({ assignmentMode:'automatic', stagedFileId:staged.id, quantity:3 });
+  await waitFor(() => starts.length === 2);
+  const snapshot = service.getSnapshot();
+  const batch = snapshot.productionBatches.find((item) => item.id === first.productionBatchId);
+  assert.ok(batch);
+  assert.equal(batch.quantity, 3);
+  assert.equal(batch.runs.length, 3);
+  assert.equal(new Set(snapshot.jobs.filter((job) => job.productionBatchId === batch.id).map((job) => job.stagedFile.id)).size, 1);
+  assert.deepEqual(new Set(starts.map((item) => item.id)), new Set(['p1','p2']));
+  service.stop();
+});
+
+test('production batch can pause, change waiting quantity, resume and cancel remaining copies', async () => {
+  const store = memoryStore();
+  const staged = {
+    id:'77777777-7777-4777-8777-777777777777', fileName:'production.gcode', filePath:'/staged/production.gcode', size:10, sha256:'e'.repeat(64), stagedAt:new Date().toISOString(),
+    requirements:{ requiredTools:[0], toolCount:1, usageReliable:true, logicalTools:[{ index:0 }], materialMetadata:{ metadataAvailable:false, materials:[] } }
+  };
+  const service = new PrintQueueService({
+    fleetState:new FakeFleetState([]),
+    chamberPreheat:{ isActive:() => false, stop:async () => {} },
+    loadJobsFn:store.load,
+    saveJobsFn:store.save,
+    getQueueFileFn:async () => staged,
+    pruneQueueFilesFn:async () => 0
+  });
+  await service.start();
+  const first = await service.add({ assignmentMode:'automatic', stagedFileId:staged.id, quantity:3 });
+  const batchId = first.productionBatchId;
+  await service.pauseProduction(batchId);
+  assert.equal(service.getSnapshot().productionBatches[0].paused, true);
+  await service.setProductionQuantity(batchId, 5);
+  assert.equal(service.getSnapshot().productionBatches[0].quantity, 5);
+  assert.equal(service.getSnapshot().productionBatches[0].runs.length, 5);
+  await service.setProductionQuantity(batchId, 2);
+  assert.equal(service.getSnapshot().productionBatches[0].runs.length, 2);
+  await service.resumeProduction(batchId);
+  assert.equal(service.getSnapshot().productionBatches[0].paused, false);
+  const result = await service.cancelProduction(batchId);
+  assert.equal(result.cancelled, 2);
+  assert.equal(service.getSnapshot().productionBatches[0].cancelled, 2);
+  service.stop();
+});
+
+test('clear history retains completed production runs while sibling copies are still pending', async () => {
+  const batchId = '88888888-8888-4888-8888-888888888888';
+  const stagedFile = { id:'99999999-9999-4999-8999-999999999999', fileName:'batch.gcode' };
+  const store = memoryStore([
+    { id:'done', productionBatchId:batchId, productionSequence:1, productionQuantity:2, assignmentMode:'automatic', printerId:'p1', printerName:'Printer', fileName:'batch.gcode', stagedFile, status:'completed', options:{}, queuedAt:'2026-09-11T10:00:00.000Z', updatedAt:'2026-09-11T10:30:00.000Z', finishedAt:'2026-09-11T10:30:00.000Z', bedClearanceRequired:false },
+    { id:'waiting', productionBatchId:batchId, productionSequence:2, productionQuantity:2, assignmentMode:'automatic', printerId:null, printerName:'Next available compatible printer', fileName:'batch.gcode', stagedFile, status:'queued', options:{}, queuedAt:'2026-09-11T10:01:00.000Z', updatedAt:'2026-09-11T10:01:00.000Z', bedClearanceRequired:false }
+  ]);
+  const service = new PrintQueueService({
+    fleetState:new FakeFleetState([]),
+    chamberPreheat:{ isActive:() => false, stop:async () => {} },
+    loadJobsFn:store.load,
+    saveJobsFn:store.save,
+    pruneQueueFilesFn:async () => 0
+  });
+  await service.start();
+  assert.equal(await service.clearHistory(), 0);
+  assert.equal(service.getSnapshot().productionBatches[0].completed, 1);
+  assert.equal(service.getSnapshot().productionBatches[0].queued, 1);
+  service.stop();
+});
+
+
+test('pausing a production batch during staged upload prevents that copy from starting until resumed', async () => {
+  const fleetState = new FakeFleetState([{ id:'p1', name:'Printer', online:true, status:{ status:'idle', fileName:null, tools:[{ index:0, filament:{} }] } }]);
+  const store = memoryStore();
+  const staged = {
+    id:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', fileName:'paused-batch.gcode', filePath:'/staged/paused-batch.gcode', size:10, sha256:'f'.repeat(64), stagedAt:new Date().toISOString(),
+    requirements:{ requiredTools:[0], toolCount:1, usageReliable:true, logicalTools:[{ index:0 }], materialMetadata:{ metadataAvailable:false, materials:[] } }
+  };
+  let releaseUpload;
+  const uploadGate = new Promise((resolve) => { releaseUpload = resolve; });
+  let uploaded = false;
+  let starts = 0;
+  const service = new PrintQueueService({
+    fleetState,
+    chamberPreheat:{ isActive:() => false, stop:async () => {} },
+    getPrinterFn:async () => ({ id:'p1', name:'Printer' }),
+    adapterResolver:() => ({
+      capabilities:{ fileUpload:true, localFiles:true, printLocalFile:true }, limits:{ toolCount:1 }, uploadExtensions:['.gcode'],
+      getStatus:async () => fleetState.getPrinterState('p1').status,
+      verifyFile:async () => ({ verified:uploaded, source:'test' }),
+      uploadFile:async () => { await uploadGate; uploaded = true; },
+      printLocalFile:async () => { starts++; }
+    }),
+    loadJobsFn:store.load,
+    saveJobsFn:store.save,
+    getQueueFileFn:async () => staged,
+    pruneQueueFilesFn:async () => 0,
+    saveFileMaterialMetadataFn:async () => {}
+  });
+  await service.start();
+  const first = await service.add({ assignmentMode:'automatic', stagedFileId:staged.id, quantity:2 });
+  await waitFor(() => service.getProductionJobs(first.productionBatchId).some((job) => job.status === 'uploading'));
+  await service.pauseProduction(first.productionBatchId);
+  releaseUpload();
+  await waitFor(() => service.getProductionJobs(first.productionBatchId).every((job) => job.status === 'queued'));
+  assert.equal(starts, 0);
+  assert.equal(service.getSnapshot().productionBatches[0].paused, true);
+  await service.resumeProduction(first.productionBatchId);
+  await waitFor(() => starts === 1);
+  service.stop();
+});
+
+test('cancel remaining catches a production copy already uploading without cancelling active prints', async () => {
+  const fleetState = new FakeFleetState([{ id:'p1', name:'Printer', online:true, status:{ status:'idle', fileName:null, tools:[{ index:0, filament:{} }] } }]);
+  const store = memoryStore();
+  const staged = {
+    id:'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', fileName:'cancel-batch.gcode', filePath:'/staged/cancel-batch.gcode', size:10, sha256:'1'.repeat(64), stagedAt:new Date().toISOString(),
+    requirements:{ requiredTools:[0], toolCount:1, usageReliable:true, logicalTools:[{ index:0 }], materialMetadata:{ metadataAvailable:false, materials:[] } }
+  };
+  let releaseUpload;
+  const uploadGate = new Promise((resolve) => { releaseUpload = resolve; });
+  let starts = 0;
+  const service = new PrintQueueService({
+    fleetState,
+    chamberPreheat:{ isActive:() => false, stop:async () => {} },
+    getPrinterFn:async () => ({ id:'p1', name:'Printer' }),
+    adapterResolver:() => ({
+      capabilities:{ fileUpload:true, localFiles:true, printLocalFile:true }, limits:{ toolCount:1 }, uploadExtensions:['.gcode'],
+      getStatus:async () => fleetState.getPrinterState('p1').status,
+      verifyFile:async () => ({ verified:false, source:'test' }),
+      uploadFile:async () => { await uploadGate; },
+      printLocalFile:async () => { starts++; }
+    }),
+    loadJobsFn:store.load,
+    saveJobsFn:store.save,
+    getQueueFileFn:async () => staged,
+    pruneQueueFilesFn:async () => 0,
+    saveFileMaterialMetadataFn:async () => {}
+  });
+  await service.start();
+  const first = await service.add({ assignmentMode:'automatic', stagedFileId:staged.id, quantity:2 });
+  await waitFor(() => service.getProductionJobs(first.productionBatchId).some((job) => job.status === 'uploading'));
+  const result = await service.cancelProduction(first.productionBatchId);
+  assert.equal(result.cancelled, 2);
+  releaseUpload();
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.equal(starts, 0);
+  assert.ok(service.getProductionJobs(first.productionBatchId).every((job) => job.status === 'cancelled'));
+  service.stop();
+});

@@ -179,6 +179,7 @@ async function apiRoute(req, res, url) {
       printerId: body.printerId,
       fileName: body.fileName,
       stagedFileId: body.stagedFileId,
+      quantity: body.quantity,
       options: body.options || {}
     });
     return json(res, 201, { job, queue: printQueue.getSnapshot() });
@@ -192,6 +193,21 @@ async function apiRoute(req, res, url) {
   if (req.method === 'DELETE' && url.pathname === '/api/queue/history') {
     const cleared = await printQueue.clearHistory();
     return json(res, 200, { ok: true, cleared, queue: printQueue.getSnapshot() });
+  }
+
+  const productionQueueMatch = url.pathname.match(/^\/api\/queue\/production\/([^/]+)\/(pause|resume|cancel|quantity)$/);
+  if (productionQueueMatch && req.method === 'POST') {
+    const batchId = decodeURIComponent(productionQueueMatch[1]);
+    const action = productionQueueMatch[2];
+    let result;
+    if (action === 'pause') result = await printQueue.pauseProduction(batchId);
+    else if (action === 'resume') result = await printQueue.resumeProduction(batchId);
+    else if (action === 'cancel') result = await printQueue.cancelProduction(batchId);
+    else {
+      const body = await readJson(req);
+      result = await printQueue.setProductionQuantity(batchId, body.quantity);
+    }
+    return json(res, 200, { ok:true, production:result, queue:printQueue.getSnapshot() });
   }
 
   const bedClearanceMatch = url.pathname.match(/^\/api\/queue\/bed-clearance\/([^/]+)$/);
