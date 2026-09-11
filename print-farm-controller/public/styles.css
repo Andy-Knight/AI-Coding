@@ -332,3 +332,11 @@ input:focus,select:focus { border-color:#7a9fbe; }
   .file { align-items:flex-start; }
   .file-actions { flex-direction:column; }
 }
+
+/* File-centric automatic fleet queue */
+.queue-job-uploading,.queue-job-preflight { border-color:#34516a; }
+.queue-status.uploading,.queue-status.preflight { background:#203a51; color:#a9d7f5; }
+.queue-compatibility { margin-top:7px; padding:7px 9px; border-radius:8px; background:#111b23; color:#8fa3b3; font-size:.7rem; line-height:1.45; }
+.queue-compatibility b { color:#bdcad4; }
+.queue-assignment-card { border:1px solid #2b3945; border-radius:10px; padding:11px 12px; background:#10171d; }
+.queue-assignment-card > div:not(.field-help) { margin-top:4px; color:#b9c8d3; font-size:.86rem; }

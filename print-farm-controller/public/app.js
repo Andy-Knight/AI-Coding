@@ -30,6 +30,12 @@ const queueSummary = document.querySelector('#queueSummary');
 const queueActiveList = document.querySelector('#queueActiveList');
 const queueHistoryList = document.querySelector('#queueHistoryList');
 const clearQueueHistoryBtn = document.querySelector('#clearQueueHistoryBtn');
+const queueAddFileBtn = document.querySelector('#queueAddFileBtn');
+const queueAddDialog = document.querySelector('#queueAddDialog');
+const queueAddForm = document.querySelector('#queueAddForm');
+const queueAddFileInput = document.querySelector('#queueAddFileInput');
+const queueAddStatus = document.querySelector('#queueAddStatus');
+const queueAddError = document.querySelector('#queueAddError');
 
 let fleet = [];
 let adapters = [];
@@ -298,6 +304,8 @@ function queueOptionsText(job) {
 function queueStatusLabel(status) {
   const labels = {
     queued:'Queued',
+    uploading:'Uploading',
+    preflight:'Preflight',
     starting:'Starting',
     printing:'Printing',
     needs_review:'Needs review',
@@ -306,6 +314,26 @@ function queueStatusLabel(status) {
     cancelled:'Cancelled'
   };
   return labels[status] || status || 'Unknown';
+}
+
+function queueCompatibilityMarkup(job) {
+  if (job.assignmentMode !== 'automatic' || !job.compatibility || job.status !== 'queued') return '';
+  const groups = [
+    ['ready', 'Eligible'],
+    ['blocked', 'Waiting'],
+    ['needsReview', 'Needs review'],
+    ['incompatible', 'Not compatible']
+  ];
+  const rows = [];
+  for (const [key, label] of groups) {
+    const items = Array.isArray(job.compatibility[key]) ? job.compatibility[key] : [];
+    if (!items.length) continue;
+    rows.push(`<div><b>${escapeHtml(label)}:</b> ${items.map((item) => {
+      const reasons = Array.isArray(item.reasons) && item.reasons.length ? ` — ${item.reasons.map((reason) => reason.text).join(' · ')}` : '';
+      return `${escapeHtml(item.printerName || item.printerId)}${escapeHtml(reasons)}`;
+    }).join('<br>')}</div>`);
+  }
+  return rows.length ? `<div class="queue-compatibility">${rows.join('')}</div>` : '';
 }
 
 function queueJobMarkup(job, { history = false, queuedIndex = -1, queuedCount = 0 } = {}) {
@@ -323,11 +351,13 @@ function queueJobMarkup(job, { history = false, queuedIndex = -1, queuedCount = 
         ${job.status === 'needs_review' ? `<button type="button" class="secondary" data-queue-recheck="${escapeHtml(job.id)}">Recheck</button>` : ''}
         <button type="button" class="danger queue-cancel-button" data-queue-cancel="${escapeHtml(job.id)}">Cancel</button>
       </div>`;
+  const printerLabel = job.assignmentMode === 'automatic' && !job.printerId ? 'Next available compatible printer' : (job.printerName || job.printerId || 'Unassigned');
   return `<article class="queue-job queue-job-${escapeHtml(job.status)}" data-queue-job="${escapeHtml(job.id)}">
     <div class="queue-job-main">
       <div class="queue-job-title"><strong>${escapeHtml(job.fileName)}</strong><span class="queue-status ${escapeHtml(job.status)}">${escapeHtml(queueStatusLabel(job.status))}${progress ? ` · ${progress}` : ''}</span></div>
-      <div class="queue-job-printer">${escapeHtml(job.printerName || job.printerId)}</div>
+      <div class="queue-job-printer">${escapeHtml(printerLabel)}</div>
       <div class="queue-job-meta">${escapeHtml(meta)}</div>
+      ${queueCompatibilityMarkup(job)}
       ${error}
     </div>
     ${controls}
@@ -351,7 +381,7 @@ function renderPrintQueue() {
   if (!queueDialog) return;
   const jobs = Array.isArray(queueState?.jobs) ? queueState.jobs : [];
   const queuedJobs = jobs.filter((job) => job.status === 'queued');
-  const activeJobs = jobs.filter((job) => job.status === 'starting' || job.status === 'printing');
+  const activeJobs = jobs.filter((job) => ['uploading','preflight','starting','printing'].includes(job.status));
   const reviewJobs = jobs.filter((job) => job.status === 'needs_review');
   const currentJobs = [...activeJobs, ...reviewJobs, ...queuedJobs];
   const clearanceItems = Array.isArray(queueState?.bedClearance) ? queueState.bedClearance : [];
@@ -402,6 +432,38 @@ async function addPrintQueueJob(printer, fileName, options = {}) {
   queueState = result.queue || queueState;
   renderPrintQueue();
   return result.job;
+}
+
+async function stageAutomaticQueueFile(file, options = {}) {
+  if (!(file instanceof File) || !file.size) throw new Error('Choose a file to queue');
+  if (file.size > 512 * 1024 * 1024) throw new Error('File exceeds the 512 MB upload limit');
+  let stagedFile = null;
+  try {
+    const response = await fetch('/api/queue/stage', {
+      method:'POST',
+      headers:{ 'x-file-name':encodeURIComponent(file.name), 'content-type':'application/octet-stream' },
+      body:file
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || `Queue staging failed (${response.status})`);
+    stagedFile = payload.stagedFile;
+    const result = await api('/api/queue', {
+      method:'POST',
+      body:JSON.stringify({
+        assignmentMode:'automatic',
+        stagedFileId:stagedFile.id,
+        options
+      })
+    });
+    queueState = result.queue || queueState;
+    renderPrintQueue();
+    return result.job;
+  } catch (error) {
+    if (stagedFile?.id) {
+      await fetch(`/api/queue/stage/${encodeURIComponent(stagedFile.id)}`, { method:'DELETE' }).catch(() => {});
+    }
+    throw error;
+  }
 }
 
 function selectedPrinters() {
@@ -745,6 +807,36 @@ function openAdd() {
 document.querySelector('#addPrinterBtn').addEventListener('click', openAdd);
 queueBtn?.addEventListener('click', () => { renderPrintQueue(); queueDialog.showModal(); });
 document.querySelectorAll('[data-queue-close]').forEach((el) => el.addEventListener('click', () => queueDialog.close()));
+queueAddFileBtn?.addEventListener('click', () => {
+  queueAddForm?.reset();
+  if (queueAddStatus) queueAddStatus.textContent = '';
+  if (queueAddError) { queueAddError.textContent = ''; queueAddError.classList.add('hidden'); }
+  queueAddDialog?.showModal();
+});
+document.querySelectorAll('[data-queue-add-close]').forEach((el) => el.addEventListener('click', () => queueAddDialog?.close()));
+queueAddForm?.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const file = queueAddFileInput?.files?.[0];
+  const submit = queueAddForm.querySelector('button[type="submit"]');
+  if (submit) submit.disabled = true;
+  if (queueAddError) { queueAddError.textContent = ''; queueAddError.classList.add('hidden'); }
+  if (queueAddStatus) queueAddStatus.textContent = 'Staging file on controller…';
+  try {
+    const data = new FormData(queueAddForm);
+    await stageAutomaticQueueFile(file, {
+      levelingBeforePrint:data.get('levelingBeforePrint') === 'on',
+      flowCalibrationBeforePrint:data.get('flowCalibrationBeforePrint') === 'on'
+    });
+    if (queueAddStatus) queueAddStatus.textContent = 'Added to fleet queue';
+    queueAddDialog?.close();
+    renderPrintQueue();
+  } catch (error) {
+    if (queueAddStatus) queueAddStatus.textContent = '';
+    if (queueAddError) { queueAddError.textContent = error.message; queueAddError.classList.remove('hidden'); }
+  } finally {
+    if (submit) submit.disabled = false;
+  }
+});
 clearQueueHistoryBtn?.addEventListener('click', async () => {
   if (!confirm('Clear completed, failed and cancelled print history? Active and queued jobs will be kept.')) return;
   try {
@@ -814,7 +906,14 @@ queueHistoryList?.addEventListener('click', async (event) => {
   const printer = fleet.find((item) => item.id === job.printerId);
   button.disabled = true;
   try {
-    // A U1 reprint must re-open Print setup because filament/nozzle state may
+    if (job.assignmentMode === 'automatic') {
+      if (!confirm(`Queue ${job.fileName} again for the next available compatible printer?`)) return;
+      const result = await api(`/api/queue/${encodeURIComponent(job.id)}/reprint`, { method:'POST', body:'{}' });
+      queueState = result.queue || queueState;
+      renderPrintQueue();
+      return;
+    }
+    // A fixed U1 reprint must re-open Print setup because filament/nozzle state may
     // have changed since the historical job was queued. This avoids silently
     // reusing a stale physical tool mapping.
     if (printer?.capabilities?.printToolMapping) {

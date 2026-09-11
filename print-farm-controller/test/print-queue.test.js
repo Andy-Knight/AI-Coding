@@ -327,3 +327,135 @@ test('FlashForge queued material mismatch becomes Needs review and blocks later 
   assert.deepEqual(starts, ['first.gcode']);
   service.stop();
 });
+
+test('automatic queue job selects a compatible idle printer, uploads, verifies and applies U1 tool mapping', async () => {
+  const tools = [
+    { index:0, nozzleDiameter:0.6, filament:{ present:true, color:'#00FF00', material:'PETG' } },
+    { index:2, nozzleDiameter:0.4, filament:{ present:true, color:'#FF0000', material:'PLA' } }
+  ];
+  const fleetState = new FakeFleetState([
+    { id:'u1a', name:'U1-01', online:true, capabilities:{}, limits:{ toolCount:4 }, status:{ status:'idle', fileName:null, tools } },
+    { id:'u1b', name:'U1-02', online:true, capabilities:{}, limits:{ toolCount:4 }, status:{ status:'idle', fileName:null, tools } }
+  ]);
+  const pendingClearance = {
+    id:'old', assignmentMode:'fixed', printerId:'u1a', printerName:'U1-01', fileName:'old.gcode', status:'completed', options:{},
+    queuedAt:'2026-09-11T10:00:00.000Z', updatedAt:'2026-09-11T10:30:00.000Z', finishedAt:'2026-09-11T10:30:00.000Z',
+    bedClearanceRequired:true, bedClearedAt:null
+  };
+  const store = memoryStore([pendingClearance]);
+  const uploaded = new Set();
+  const uploads = [];
+  const starts = [];
+  const staged = {
+    id:'11111111-1111-4111-8111-111111111111', fileName:'multi.gcode', filePath:'/staged/multi.gcode', size:123,
+    sha256:'a'.repeat(64), stagedAt:'2026-09-11T11:00:00.000Z',
+    requirements:{ requiredTools:[0,1], toolCount:2, usageReliable:true, logicalTools:[
+      { index:0, material:'PLA', color:'#FF0000', nozzleDiameter:0.4 },
+      { index:1, material:'PETG', color:'#00FF00', nozzleDiameter:0.6 }
+    ], materialMetadata:{ metadataAvailable:true, requiredMaterial:null, materials:['PLA','PETG'] } }
+  };
+  const printers = new Map([
+    ['u1a',{ id:'u1a', name:'U1-01' }],
+    ['u1b',{ id:'u1b', name:'U1-02' }]
+  ]);
+  const service = new PrintQueueService({
+    fleetState,
+    chamberPreheat:{ isActive:() => false, stop:async () => {} },
+    getPrinterFn: async (id) => printers.get(id) || null,
+    adapterResolver: (printer) => ({
+      capabilities:{ fileUpload:true, localFiles:true, printLocalFile:true, printToolMapping:true },
+      limits:{ toolCount:4 },
+      getStatus:async () => fleetState.getPrinterState(printer.id).status,
+      verifyFile:async () => ({ verified:uploaded.has(printer.id), source:'test' }),
+      uploadFile:async (filePath) => { uploads.push({ id:printer.id, filePath }); uploaded.add(printer.id); },
+      printLocalFile:async (fileName, options) => starts.push({ id:printer.id, fileName, options })
+    }),
+    loadJobsFn: store.load,
+    saveJobsFn: store.save,
+    getQueueFileFn: async () => staged,
+    pruneQueueFilesFn: async () => 0,
+    saveFileMaterialMetadataFn: async () => {}
+  });
+  await service.start();
+  const job = await service.add({ assignmentMode:'automatic', stagedFileId:staged.id });
+  await waitFor(() => starts.length === 1);
+  const current = service.getJob(job.id);
+  assert.equal(current.printerId, 'u1b');
+  assert.equal(current.status, 'starting');
+  assert.deepEqual(uploads, [{ id:'u1b', filePath:'/staged/multi.gcode' }]);
+  assert.deepEqual(starts[0].options.toolMap, { '0':2, '1':0 });
+  assert.ok(current.compatibility.blocked.some((item) => item.printerId === 'u1a' && item.reasons.some((reason) => reason.code === 'bed_not_cleared')));
+  service.stop();
+});
+
+test('automatic queue job remains queued and exposes why compatible printers are blocked', async () => {
+  const fleetState = new FakeFleetState([
+    { id:'p1', name:'Printer 1', online:false, error:'offline', status:null },
+    { id:'p2', name:'Printer 2', online:true, status:{ status:'printing', fileName:'other.gcode', tools:[{ index:0, filament:{ material:'PLA' } }] } }
+  ]);
+  const store = memoryStore();
+  const staged = {
+    id:'22222222-2222-4222-8222-222222222222', fileName:'part.gcode', filePath:'/staged/part.gcode', size:10, sha256:'b'.repeat(64), stagedAt:new Date().toISOString(),
+    requirements:{ requiredTools:[0], toolCount:1, usageReliable:true, logicalTools:[{ index:0, material:'PLA' }], materialMetadata:{ metadataAvailable:true, requiredMaterial:'PLA', materials:['PLA'] } }
+  };
+  const service = new PrintQueueService({
+    fleetState,
+    chamberPreheat:{ isActive:() => false, stop:async () => {} },
+    getPrinterFn: async (id) => ({ id, name:id === 'p1' ? 'Printer 1' : 'Printer 2' }),
+    adapterResolver: () => ({ capabilities:{ fileUpload:true, localFiles:true, printLocalFile:true }, limits:{} }),
+    loadJobsFn: store.load,
+    saveJobsFn: store.save,
+    getQueueFileFn: async () => staged,
+    pruneQueueFilesFn: async () => 0
+  });
+  await service.start();
+  const job = await service.add({ assignmentMode:'automatic', stagedFileId:staged.id });
+  await waitFor(() => Boolean(service.getJob(job.id).compatibility));
+  const current = service.getJob(job.id);
+  assert.equal(current.status, 'queued');
+  assert.equal(current.printerId, null);
+  assert.equal(current.compatibility.ready.length, 0);
+  assert.ok(current.compatibility.blocked.some((item) => item.reasons.some((reason) => reason.code === 'offline')));
+  assert.ok(current.compatibility.blocked.some((item) => item.reasons.some((reason) => reason.code === 'busy')));
+  service.stop();
+});
+
+test('cancelling an automatic job during staged upload cannot race into print start', async () => {
+  const fleetState = new FakeFleetState([{ id:'p1', name:'Printer', online:true, status:{ status:'idle', fileName:null, tools:[{ index:0, filament:{ material:'PLA' } }] } }]);
+  const store = memoryStore();
+  const staged = {
+    id:'33333333-3333-4333-8333-333333333333', fileName:'part.gcode', filePath:'/staged/part.gcode', size:10, sha256:'c'.repeat(64), stagedAt:new Date().toISOString(),
+    requirements:{ requiredTools:[0], toolCount:1, usageReliable:true, logicalTools:[{ index:0, material:'PLA' }], materialMetadata:{ metadataAvailable:true, requiredMaterial:'PLA', materials:['PLA'] } }
+  };
+  let releaseUpload;
+  const uploadGate = new Promise((resolve) => { releaseUpload = resolve; });
+  let uploaded = false;
+  let starts = 0;
+  const service = new PrintQueueService({
+    fleetState,
+    chamberPreheat:{ isActive:() => false, stop:async () => {} },
+    getPrinterFn: async () => ({ id:'p1', name:'Printer' }),
+    adapterResolver: () => ({
+      capabilities:{ fileUpload:true, localFiles:true, printLocalFile:true }, limits:{}, uploadExtensions:['.gcode'],
+      getStatus:async () => fleetState.getPrinterState('p1').status,
+      verifyFile:async () => ({ verified:uploaded, source:'test' }),
+      uploadFile:async () => { await uploadGate; uploaded = true; },
+      printLocalFile:async () => { starts++; }
+    }),
+    loadJobsFn: store.load,
+    saveJobsFn: store.save,
+    getQueueFileFn: async () => staged,
+    pruneQueueFilesFn: async () => 0,
+    saveFileMaterialMetadataFn: async () => {}
+  });
+  await service.start();
+  const job = await service.add({ assignmentMode:'automatic', stagedFileId:staged.id });
+  await waitFor(() => service.getJob(job.id).status === 'uploading');
+  await service.cancel(job.id);
+  releaseUpload();
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.equal(service.getJob(job.id).status, 'cancelled');
+  assert.equal(starts, 0);
+  assert.equal(service.getJob(job.id).bedClearanceRequired, false);
+  service.stop();
+});
