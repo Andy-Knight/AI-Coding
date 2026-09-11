@@ -5,7 +5,7 @@ on:
     branches:
       - feature/file-centric-queue
     paths:
-      - .pfc-update/pfc-v0.11.0.patch
+      - .pfc-update/READY
 
 permissions:
   contents: write
@@ -20,8 +20,10 @@ jobs:
           ref: feature/file-centric-queue
           fetch-depth: 0
 
-      - name: Apply tested update patch
-        run: patch -p1 < .pfc-update/pfc-v0.11.0.patch
+      - name: Reassemble and apply tested update patch
+        run: |
+          cat .pfc-update/part-* > /tmp/pfc-v0.11.0.patch
+          patch -p1 < /tmp/pfc-v0.11.0.patch
 
       - name: Run Printer Fleet Controller tests
         working-directory: print-farm-controller
@@ -31,7 +33,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git rm .pfc-update/pfc-v0.11.0.patch
+          git rm -r .pfc-update
           git add print-farm-controller
           git commit -m "Add file-centric automatic printer queue v0.11.0"
           git push origin HEAD:feature/file-centric-queue
