@@ -7,7 +7,7 @@
 - Repository: `Andy-Knight/AI-Coding`
 - Project path: `print-farm-controller/`
 - Branch: `main`
-- Current application version: **0.11.0**
+- Current application version: **0.11.1**
 - Runtime: **Node.js 20+**, ES modules, no npm runtime dependencies.
 - GitHub is the authoritative code baseline.
 
@@ -77,20 +77,22 @@ Manufacturer-specific discovery, capabilities, limits, status normalization, fil
   - queue UI showing Eligible / Waiting / Needs review / Not compatible;
   - fixed-printer jobs retained for backward compatibility.
 - v0.11.0 regression suite: **100 passing tests, 0 failures**, including GitHub Actions verification of the release patch.
+- **v0.11.1 FlashForge nozzle designation:** persistent per-printer controller nozzle diameter, normalized into FlashForge tool status and enforced by file-centric automatic queue compatibility; explicit nozzle matches can run unattended and mismatches are blocked.
+- v0.11.1 regression suite: **105 passing tests, 0 failures**, including GitHub Actions verification.
 
 ## Current task
 
-**v0.11.0 implementation is complete in code and automated tests.** Next priority is real-hardware validation of the new **Next available compatible printer** workflow on the user's configured FlashForge and Snapmaker fleet.
+**v0.11.1 implementation is complete in code and automated tests.** Next priority is real-hardware validation of the **Next available compatible printer** workflow, including the new FlashForge controller nozzle designation, on the user's configured FlashForge and Snapmaker fleet.
 
 Validation should confirm staging from the browser, live compatibility reasons, bed-clearance blocking, U1 tool mapping, upload/verification, final preflight, print start, cancellation during preparation, restart behaviour, and fixed-printer queue regression behaviour.
 
 ## Next steps
 
-1. Deploy/run v0.11.0 and queue a simple known-good single-tool G-code using **+ Queue file**.
+1. Deploy/run v0.11.1 and queue a simple known-good single-tool G-code using **+ Queue file**.
 2. Verify the UI lists eligible and blocked printers with accurate reasons before assignment.
 3. Test bed-clearance blocking by leaving one otherwise-compatible printer uncleared and confirming another eligible printer is chosen.
 4. Validate U1 material/colour/nozzle mapping with a known multi-tool file before relying on unattended multi-tool scheduling.
-5. Confirm FlashForge files with explicit nozzle requirements enter **Needs review** when nozzle size cannot be verified rather than being started automatically.
+5. Set each FlashForge printer's **Controller nozzle designation**, then confirm explicit staged-file nozzle matches become eligible and mismatches remain blocked; clearing the designation should return explicit-nozzle jobs to **Needs review**.
 6. Test controller restart with an unassigned automatic job and confirm it remains safely queued with the staged file intact.
 7. After hardware validation, address any observed edge cases before extending scheduling policy/fairness or adding more printer manufacturers.
 

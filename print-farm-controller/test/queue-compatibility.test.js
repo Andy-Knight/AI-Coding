@@ -60,6 +60,28 @@ test('automatic compatibility does not guess a required nozzle size when printer
   assert.ok(result.reasons.some((reason) => reason.code === 'nozzle_unknown'));
 });
 
+test('FlashForge controller nozzle designation satisfies an explicit staged-file nozzle requirement', () => {
+  const result = evaluateQueueCompatibility({
+    job:{ fileName:'part.gcode', stagedFile:{ requirements:{ requiredTools:[0], toolCount:1, usageReliable:true, logicalTools:[{ index:0, material:'PLA', nozzleDiameter:0.6 }] } } },
+    printer:{ id:'ff', name:'AD5M' },
+    state:{ id:'ff', name:'AD5M', online:true, status:{ status:'idle', tools:[{ index:0, nozzleDiameter:0.6, nozzleDiameterSource:'manual', filament:{ material:'PLA' } }] } },
+    adapter:{ capabilities:{ fileUpload:true, localFiles:true, printLocalFile:true }, limits:{}, uploadExtensions:['.gcode','.gx','.3mf'] }
+  });
+  assert.equal(result.category, 'ready');
+  assert.equal(result.reasons.length, 0);
+});
+
+test('FlashForge controller nozzle designation blocks an explicit nozzle mismatch', () => {
+  const result = evaluateQueueCompatibility({
+    job:{ fileName:'part.gcode', stagedFile:{ requirements:{ requiredTools:[0], toolCount:1, usageReliable:true, logicalTools:[{ index:0, material:'PLA', nozzleDiameter:0.6 }] } } },
+    printer:{ id:'ff', name:'AD5M' },
+    state:{ id:'ff', name:'AD5M', online:true, status:{ status:'idle', tools:[{ index:0, nozzleDiameter:0.4, nozzleDiameterSource:'manual', filament:{ material:'PLA' } }] } },
+    adapter:{ capabilities:{ fileUpload:true, localFiles:true, printLocalFile:true }, limits:{}, uploadExtensions:['.gcode','.gx','.3mf'] }
+  });
+  assert.equal(result.category, 'blocked');
+  assert.ok(result.reasons.some((reason) => reason.code === 'nozzle_mismatch'));
+});
+
 test('automatic compatibility rejects file types unsupported by a printer adapter', () => {
   const result = evaluateQueueCompatibility({
     job:{ fileName:'project.3mf', stagedFile:{ requirements:{ requiredTools:[], toolCount:0, logicalTools:[] } } },

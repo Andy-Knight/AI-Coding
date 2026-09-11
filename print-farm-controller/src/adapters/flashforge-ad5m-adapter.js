@@ -63,7 +63,8 @@ const CAPABILITIES = normalizeCapabilities({
   camera: true,
   chamberPreheat: true,
   materialStatus: true,
-  materialDesignation: true
+  materialDesignation: true,
+  nozzleDesignation: true
 });
 
 function normalizedFileName(value) {
@@ -108,6 +109,24 @@ export class FlashForgeAd5mAdapter extends PrinterAdapter {
         filament.metadataAvailable = true;
       } else {
         filament.manuallyAssigned = false;
+      }
+    }
+
+    const tool = status?.tools?.[0];
+    if (tool) {
+      const reportedNozzle = Number(tool.nozzleDiameter);
+      const reportedNozzleDiameter = Number.isFinite(reportedNozzle) && reportedNozzle > 0 ? reportedNozzle : null;
+      const manualNozzle = Number(this.printer.adapterConfig?.nozzleDiameterDesignation);
+      const manualNozzleDiameter = Number.isFinite(manualNozzle) && manualNozzle > 0 ? manualNozzle : null;
+      tool.reportedNozzleDiameter = reportedNozzleDiameter;
+      if (manualNozzleDiameter) {
+        tool.nozzleDiameter = manualNozzleDiameter;
+        tool.nozzleDiameterSource = 'manual';
+        tool.nozzleManuallyAssigned = true;
+      } else {
+        tool.nozzleDiameter = reportedNozzleDiameter;
+        tool.nozzleDiameterSource = reportedNozzleDiameter ? 'printer' : null;
+        tool.nozzleManuallyAssigned = false;
       }
     }
     return status;

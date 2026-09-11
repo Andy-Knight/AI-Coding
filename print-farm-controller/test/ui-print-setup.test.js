@@ -164,6 +164,20 @@ test('FlashForge detail exposes printer-reported filament type in Toolhead statu
 });
 
 
+test('FlashForge detail exposes persistent controller nozzle designation for automatic queue compatibility', () => {
+  const server = fs.readFileSync(new URL('../src/server.js', import.meta.url), 'utf8');
+  const store = fs.readFileSync(new URL('../src/store.js', import.meta.url), 'utf8');
+  const adapter = fs.readFileSync(new URL('../src/adapters/flashforge-ad5m-adapter.js', import.meta.url), 'utf8');
+  assert.match(app, /Controller nozzle designation/);
+  assert.match(app, /data-nozzle-designation-save/);
+  assert.match(app, /data-nozzle-designation-clear/);
+  assert.match(app, /\/api\/printers\/\$\{id\}\/nozzle-designation/);
+  assert.match(server, /action === 'nozzle-designation'/);
+  assert.match(store, /setPrinterNozzleDesignation/);
+  assert.match(adapter, /nozzleDiameterDesignation/);
+  assert.match(adapter, /nozzleDiameterSource = 'manual'/);
+});
+
 test('FlashForge file material mismatch is warned for direct print and held for queue review', () => {
   const server = fs.readFileSync(new URL('../src/server.js', import.meta.url), 'utf8');
   const queue = fs.readFileSync(new URL('../src/print-queue.js', import.meta.url), 'utf8');

@@ -1364,6 +1364,26 @@ function flashForgeMaterialDesignationMarkup(printer, filament = {}) {
   </div>`;
 }
 
+function flashForgeNozzleDesignationMarkup(printer, tool = {}) {
+  if (!printer?.capabilities?.nozzleDesignation) return '';
+  const manualValue = tool.nozzleDiameterSource === 'manual' && Number.isFinite(Number(tool.nozzleDiameter))
+    ? Number(tool.nozzleDiameter)
+    : (Number.isFinite(Number(printer.nozzleDiameterDesignation)) ? Number(printer.nozzleDiameterDesignation) : '');
+  const reported = Number.isFinite(Number(tool.reportedNozzleDiameter)) && Number(tool.reportedNozzleDiameter) > 0
+    ? Number(tool.reportedNozzleDiameter)
+    : null;
+  const clearLabel = reported ? 'Use printer value' : 'Clear designation';
+  const options = [0.25, 0.4, 0.6, 0.8];
+  return `<div class="material-designation-control nozzle-designation-control">
+    <label>Controller nozzle designation
+      <input type="number" data-nozzle-designation-input value="${escapeHtml(manualValue)}" list="flashforgeNozzleSizes" min="0.1" max="1.2" step="0.05" placeholder="e.g. 0.4" />
+    </label>
+    <datalist id="flashforgeNozzleSizes">${options.map((value) => `<option value="${value}"></option>`).join('')}</datalist>
+    <div class="mini-actions"><button type="button" class="secondary" data-nozzle-designation-save>Assign nozzle</button><button type="button" class="secondary" data-nozzle-designation-clear>${escapeHtml(clearLabel)}</button></div>
+    <div class="field-help">Stored by Printer Fleet Controller for this printer and used by automatic queue compatibility.${reported ? ` Printer currently reports ${escapeHtml(nozzleDiameterText(reported))}.` : ' FlashForge firmware does not reliably report the installed nozzle size, so set this whenever you change the nozzle.'}</div>
+  </div>`;
+}
+
 function nozzleDiameterText(value) {
   const diameter = Number(value);
   return Number.isFinite(diameter) && diameter > 0 ? `${diameter.toFixed(1)} mm nozzle` : 'nozzle size unknown';
@@ -1830,9 +1850,9 @@ async function openPrinter(id) {
     : '';
   const materialStatusMarkup = capabilities.materialStatus ? (() => {
     const tools = Array.isArray(s?.tools) ? s.tools : [];
-    if (!tools.length) return `<div class="panel material-panel"><h3>Toolhead status</h3><div class="subtle">Material status is unavailable while the printer is offline.</div>${flashForgeMaterialDesignationMarkup(printer)}</div>`;
+    if (!tools.length) return `<div class="panel material-panel"><h3>Toolhead status</h3><div class="subtle">Material status is unavailable while the printer is offline.</div>${flashForgeMaterialDesignationMarkup(printer)}${flashForgeNozzleDesignationMarkup(printer)}</div>`;
     const materialHelp = printer.adapterType === 'flashforge-ad5m'
-      ? "Filament type uses the controller's manual designation when set, otherwise the value reported by the FlashForge 5M local /detail API. The 5M API does not expose U1-style filament colour/RFID metadata or a reliable live filament-presence value, so those remain unknown."
+      ? "Filament type uses the controller's manual designation when set, otherwise the value reported by the FlashForge 5M local /detail API. Installed nozzle size uses the controller nozzle designation when set because the 5M API does not reliably expose it. The 5M API also does not expose U1-style filament colour/RFID metadata or a reliable live filament-presence value."
       : 'Filament presence comes from each U1 motion sensor. Material and colour use the U1\'s effective per-tool configuration, including manual assignments for third-party filament; RFID data is used as fallback. Nozzle size and XYZ offset come directly from each physical U1 extruder.';
     return `<div class="panel material-panel">
       <h3>Toolhead status</h3>
@@ -1851,6 +1871,7 @@ async function openPrinter(id) {
         </div>`;
       }).join('')}</div>
       ${printer.adapterType === 'flashforge-ad5m' ? flashForgeMaterialDesignationMarkup(printer, tools[0]?.filament || {}) : ''}
+      ${printer.adapterType === 'flashforge-ad5m' ? flashForgeNozzleDesignationMarkup(printer, tools[0] || {}) : ''}
       <div class="field-help material-help">${escapeHtml(materialHelp)}</div>
     </div>`;
   })() : '';
@@ -2125,6 +2146,55 @@ ${flashForgePreflight}` : ''}`)) return;
       if (input) input.value = '';
     } catch (error) { showError(error); }
     finally { materialDesignationClear.disabled = false; materialDesignationClear.textContent = original; }
+  };
+
+  const nozzleDesignationSave = printerDetail.querySelector('[data-nozzle-designation-save]');
+  if (nozzleDesignationSave) nozzleDesignationSave.onclick = async () => {
+    const input = printerDetail.querySelector('[data-nozzle-designation-input]');
+    const nozzleDiameter = Number(input?.value);
+    if (!Number.isFinite(nozzleDiameter) || nozzleDiameter < 0.1 || nozzleDiameter > 1.2) {
+      showError(new Error('Enter a nozzle diameter between 0.1 and 1.2 mm, or use Clear designation.'));
+      return;
+    }
+    const original = nozzleDesignationSave.textContent;
+    nozzleDesignationSave.disabled = true;
+    nozzleDesignationSave.textContent = 'Saving…';
+    try {
+      const result = await api(`/api/printers/${id}/nozzle-designation`, { method:'POST', body:JSON.stringify({ nozzleDiameter }) });
+      printer.nozzleDiameterDesignation = result.nozzleDiameterDesignation;
+      const tool = printer.status?.tools?.[0];
+      if (tool) {
+        if (!Number.isFinite(Number(tool.reportedNozzleDiameter)) && tool.nozzleDiameterSource === 'printer' && Number.isFinite(Number(tool.nozzleDiameter))) {
+          tool.reportedNozzleDiameter = Number(tool.nozzleDiameter);
+        }
+        tool.nozzleDiameter = result.nozzleDiameterDesignation;
+        tool.nozzleDiameterSource = 'manual';
+        tool.nozzleManuallyAssigned = true;
+        updateOpenPrinterTelemetry();
+      }
+    } catch (error) { showError(error); }
+    finally { nozzleDesignationSave.disabled = false; nozzleDesignationSave.textContent = original; }
+  };
+  const nozzleDesignationClear = printerDetail.querySelector('[data-nozzle-designation-clear]');
+  if (nozzleDesignationClear) nozzleDesignationClear.onclick = async () => {
+    const original = nozzleDesignationClear.textContent;
+    nozzleDesignationClear.disabled = true;
+    nozzleDesignationClear.textContent = 'Clearing…';
+    try {
+      await api(`/api/printers/${id}/nozzle-designation`, { method:'DELETE' });
+      printer.nozzleDiameterDesignation = null;
+      const tool = printer.status?.tools?.[0];
+      if (tool) {
+        const reported = Number(tool.reportedNozzleDiameter);
+        tool.nozzleDiameter = Number.isFinite(reported) && reported > 0 ? reported : null;
+        tool.nozzleDiameterSource = tool.nozzleDiameter ? 'printer' : null;
+        tool.nozzleManuallyAssigned = false;
+        updateOpenPrinterTelemetry();
+      }
+      const input = printerDetail.querySelector('[data-nozzle-designation-input]');
+      if (input) input.value = '';
+    } catch (error) { showError(error); }
+    finally { nozzleDesignationClear.disabled = false; nozzleDesignationClear.textContent = original; }
   };
 
   printerDetail.querySelectorAll('[data-set-temp]').forEach((btn) => btn.onclick = () => {

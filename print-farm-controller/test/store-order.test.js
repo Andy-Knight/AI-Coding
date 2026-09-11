@@ -92,6 +92,33 @@ test('FlashForge manual material designation persists without exposing adapter s
   }
 });
 
+test('FlashForge controller nozzle designation persists without exposing adapter secrets', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'ff-fleet-nozzle-designation-'));
+  process.env.DATA_DIR = dir;
+  const store = await import(`../src/store.js?nozzle-designation-test=${Date.now()}`);
+
+  try {
+    const printer = await store.addPrinter({
+      name:'Nozzle Test', host:'10.0.3.2', serialNumber:'SN', checkCode:'CODE',
+      adapterConfig:{ secretValue:'keep-private' }
+    });
+    const assigned = await store.setPrinterNozzleDesignation(printer.id, 0.6);
+    assert.equal(assigned.adapterConfig.nozzleDiameterDesignation, 0.6);
+    assert.equal(assigned.adapterConfig.secretValue, 'keep-private');
+    assert.equal(store.publicPrinter(assigned).nozzleDiameterDesignation, 0.6);
+    assert.equal('adapterConfig' in store.publicPrinter(assigned), false);
+    await assert.rejects(() => store.setPrinterNozzleDesignation(printer.id, 2), /between 0.1 and 1.2 mm/);
+
+    const cleared = await store.setPrinterNozzleDesignation(printer.id, null);
+    assert.equal(cleared.adapterConfig.nozzleDiameterDesignation, undefined);
+    assert.equal(cleared.adapterConfig.secretValue, 'keep-private');
+    assert.equal(store.publicPrinter(cleared).nozzleDiameterDesignation, null);
+  } finally {
+    delete process.env.DATA_DIR;
+    await rm(dir, { recursive:true, force:true });
+  }
+});
+
 test('printer controller name can be renamed without changing connection identity', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'ff-fleet-rename-'));
   process.env.DATA_DIR = dir;

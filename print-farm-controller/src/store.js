@@ -37,6 +37,15 @@ function normalizeMaterialDesignation(value) {
   return text;
 }
 
+function normalizeNozzleDesignation(value) {
+  if (value == null || String(value).trim() === '') return null;
+  const diameter = Number(value);
+  if (!Number.isFinite(diameter) || diameter < 0.1 || diameter > 1.2) {
+    throw new Error('Nozzle designation must be between 0.1 and 1.2 mm');
+  }
+  return Number(diameter.toFixed(3));
+}
+
 async function ensureStore() {
   await fs.mkdir(DATA_DIR, { recursive: true });
   try {
@@ -132,6 +141,21 @@ export async function setPrinterMaterialDesignation(id, material) {
   return normalizeStoredPrinter(printers[index]);
 }
 
+export async function setPrinterNozzleDesignation(id, nozzleDiameter) {
+  const printers = await readAll();
+  const index = printers.findIndex((printer) => printer.id === id);
+  if (index < 0) return null;
+
+  const designation = normalizeNozzleDesignation(nozzleDiameter);
+  const adapterConfig = { ...(printers[index].adapterConfig || {}) };
+  if (designation != null) adapterConfig.nozzleDiameterDesignation = designation;
+  else delete adapterConfig.nozzleDiameterDesignation;
+
+  printers[index] = { ...printers[index], adapterConfig };
+  await writeAll(printers);
+  return normalizeStoredPrinter(printers[index]);
+}
+
 export async function reorderPrinters(printerIds) {
   const printers = await readAll();
   const requested = Array.isArray(printerIds) ? printerIds.map(String) : [];
@@ -170,6 +194,9 @@ export function publicPrinter(printer) {
     tcpPort: printer.tcpPort || printer.commandPort || 8899,
     dashboardOrder: Number.isFinite(Number(printer.dashboardOrder)) ? Number(printer.dashboardOrder) : null,
     materialDesignation: String(printer.adapterConfig?.filamentDesignation || '').trim() || null,
+    nozzleDiameterDesignation: Number.isFinite(Number(printer.adapterConfig?.nozzleDiameterDesignation))
+      ? Number(printer.adapterConfig.nozzleDiameterDesignation)
+      : null,
     createdAt: printer.createdAt
   };
 }
