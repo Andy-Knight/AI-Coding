@@ -399,7 +399,9 @@ function productionBatchMarkup(batch, { history = false } = {}) {
     return `<div class="production-run"><span>#${run.sequence} · ${escapeHtml(queueStatusLabel(run.status))}${pct}</span><span>${escapeHtml(printer)}</span></div>`;
   }).join('');
   const more = runs.length > visibleRuns.length ? `<div class="subtle">+ ${runs.length - visibleRuns.length} more copies</div>` : '';
-  const controls = !history && !batch.finished ? `<div class="production-actions">
+  const controls = history && batch.finished
+    ? `<div class="production-actions"><button type="button" class="secondary" data-production-reprint="${escapeHtml(batch.id)}">Reprint batch</button></div>`
+    : !history && !batch.finished ? `<div class="production-actions">
       <button type="button" class="secondary" data-production-action="${batch.paused ? 'resume' : 'pause'}" data-production-batch="${escapeHtml(batch.id)}">${batch.paused ? 'Resume production' : 'Pause production'}</button>
       <label class="production-quantity-control">Quantity <input type="number" min="1" max="999" step="1" value="${quantity}" data-production-quantity-input="${escapeHtml(batch.id)}"></label>
       <button type="button" class="secondary" data-production-quantity="${escapeHtml(batch.id)}">Update quantity</button>
@@ -978,6 +980,20 @@ queueActiveList?.addEventListener('click', async (event) => {
   } catch (error) { alert(error.message); move.disabled = false; }
 });
 queueHistoryList?.addEventListener('click', async (event) => {
+  const productionReprint = event.target.closest('[data-production-reprint]');
+  if (productionReprint) {
+    const batchId = productionReprint.dataset.productionReprint;
+    const batch = (queueState.productionBatches || []).find((item) => item.id === batchId);
+    if (!batch) return;
+    if (!confirm(`Reprint all ${batch.quantity} copies of ${batch.fileName} as a new production batch?`)) return;
+    productionReprint.disabled = true;
+    try {
+      const result = await api(`/api/queue/production/${encodeURIComponent(batchId)}/reprint`, { method:'POST', body:'{}' });
+      queueState = result.queue || queueState;
+      renderPrintQueue();
+    } catch (error) { alert(error.message); productionReprint.disabled = false; }
+    return;
+  }
   const button = event.target.closest('[data-queue-reprint]');
   if (!button) return;
   const job = (queueState.jobs || []).find((item) => item.id === button.dataset.queueReprint);

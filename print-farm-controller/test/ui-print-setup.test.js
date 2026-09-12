@@ -215,6 +215,18 @@ test('printer detail supports persistent controller-side renaming while retainin
 });
 
 
+test('finished production batches can be reprinted from recent history', () => {
+  const server = fs.readFileSync(new URL('../src/server.js', import.meta.url), 'utf8');
+  const queue = fs.readFileSync(new URL('../src/print-queue.js', import.meta.url), 'utf8');
+  assert.match(app, /data-production-reprint/);
+  assert.match(app, /Reprint batch/);
+  assert.match(app, /Reprint all \${batch\.quantity} copies/);
+  assert.match(app, /production\/\$\{encodeURIComponent\(batchId\)\}\/reprint/);
+  assert.match(server, /pause\|resume\|cancel\|quantity\|reprint/);
+  assert.match(queue, /async reprintProduction/);
+  assert.match(queue, /Production batch must be finished before it can be reprinted/);
+});
+
 test('queue UI exposes production quantity and batch controls', () => {
   const html = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
   const server = fs.readFileSync(new URL('../src/server.js', import.meta.url), 'utf8');

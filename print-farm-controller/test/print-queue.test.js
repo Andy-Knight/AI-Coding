@@ -589,6 +589,47 @@ test('automatic production quantity creates shared staged runs and fills multipl
   service.stop();
 });
 
+test('finished production batch can be reprinted as a fresh batch with the same quantity, staged file and options', async () => {
+  const store = memoryStore();
+  const staged = {
+    id:'12121212-1212-4212-8212-121212121212', fileName:'repeat-batch.gcode', filePath:'/staged/repeat-batch.gcode', size:10, sha256:'3'.repeat(64), stagedAt:new Date().toISOString(),
+    requirements:{ requiredTools:[0], toolCount:1, usageReliable:true, logicalTools:[{ index:0 }], materialMetadata:{ metadataAvailable:false, materials:[] } }
+  };
+  const service = new PrintQueueService({
+    fleetState:new FakeFleetState([]),
+    chamberPreheat:{ isActive:() => false, stop:async () => {} },
+    loadJobsFn:store.load,
+    saveJobsFn:store.save,
+    getQueueFileFn:async (id) => id === staged.id ? staged : null,
+    pruneQueueFilesFn:async () => 0
+  });
+  await service.start();
+  const first = await service.add({
+    assignmentMode:'automatic',
+    stagedFileId:staged.id,
+    quantity:3,
+    options:{ levelingBeforePrint:false, flowCalibrationBeforePrint:true, timeLapseBeforePrint:true }
+  });
+  await assert.rejects(() => service.reprintProduction(first.productionBatchId), /must be finished/);
+  await service.cancelProduction(first.productionBatchId);
+  assert.ok(service.getProductionJobs(first.productionBatchId).every((job) => job.status === 'cancelled'));
+
+  const reprinted = await service.reprintProduction(first.productionBatchId);
+  assert.notEqual(reprinted.productionBatchId, first.productionBatchId);
+  assert.equal(reprinted.status, 'queued');
+  assert.equal(reprinted.assignmentMode, 'automatic');
+  assert.equal(reprinted.stagedFile.id, staged.id);
+  assert.equal(reprinted.options.levelingBeforePrint, false);
+  assert.equal(reprinted.options.flowCalibrationBeforePrint, true);
+  assert.equal(reprinted.options.timeLapseBeforePrint, true);
+  assert.equal(reprinted.options.toolMap, null);
+  const newRuns = service.getProductionJobs(reprinted.productionBatchId);
+  assert.equal(newRuns.length, 3);
+  assert.ok(newRuns.every((job) => job.status === 'queued' && job.stagedFile.id === staged.id));
+  assert.ok(service.getProductionJobs(first.productionBatchId).every((job) => job.status === 'cancelled'));
+  service.stop();
+});
+
 test('production batch can pause, change waiting quantity, resume and cancel remaining copies', async () => {
   const store = memoryStore();
   const staged = {

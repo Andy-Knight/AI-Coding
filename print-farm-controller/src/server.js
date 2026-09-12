@@ -195,7 +195,7 @@ async function apiRoute(req, res, url) {
     return json(res, 200, { ok: true, cleared, queue: printQueue.getSnapshot() });
   }
 
-  const productionQueueMatch = url.pathname.match(/^\/api\/queue\/production\/([^/]+)\/(pause|resume|cancel|quantity)$/);
+  const productionQueueMatch = url.pathname.match(/^\/api\/queue\/production\/([^/]+)\/(pause|resume|cancel|quantity|reprint)$/);
   if (productionQueueMatch && req.method === 'POST') {
     const batchId = decodeURIComponent(productionQueueMatch[1]);
     const action = productionQueueMatch[2];
@@ -203,6 +203,7 @@ async function apiRoute(req, res, url) {
     if (action === 'pause') result = await printQueue.pauseProduction(batchId);
     else if (action === 'resume') result = await printQueue.resumeProduction(batchId);
     else if (action === 'cancel') result = await printQueue.cancelProduction(batchId);
+    else if (action === 'reprint') result = await printQueue.reprintProduction(batchId);
     else {
       const body = await readJson(req);
       result = await printQueue.setProductionQuantity(batchId, body.quantity);
