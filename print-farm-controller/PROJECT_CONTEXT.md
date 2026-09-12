@@ -7,7 +7,7 @@
 - Repository: `Andy-Knight/AI-Coding`
 - Project path: `print-farm-controller/`
 - Branch: `main`
-- Current application version: **0.12.0**
+- Current application version: **0.12.1**
 - Runtime: **Node.js 20+**, ES modules, no npm runtime dependencies.
 - GitHub is the authoritative code baseline.
 
@@ -85,10 +85,12 @@ Manufacturer-specific discovery, capabilities, limits, status normalization, fil
 - **v0.11.3 staged-file cleanup:** clearing print history immediately removes controller-staged queue files that have no remaining queue/history reference; shared/referenced files are retained.
 - **v0.12.0 production quantity / batch printing:** one staged G-code can create 2–999 run records sharing the same file; automatic scheduling can distribute copies across multiple compatible printers concurrently, with batch progress, pause/resume, cancel remaining, and safe quantity adjustment.
 - v0.12.0 regression suite: **113 passing tests, 0 failures**, including concurrent assignment plus pause/cancel race coverage during staged upload.
+- **v0.12.1 cancelled-history reprint regression:** automated coverage now guarantees a cancelled automatic queued job remains reprintable from Recent history using the same staged controller file and print options; UI coverage verifies cancelled history retains the Reprint action.
+- v0.12.1 regression suite: **115 passing tests, 0 failures**.
 
 ## Current task
 
-**v0.12.0 implementation is complete in code and automated tests.** Next priority is real-hardware validation of production quantities across mixed FlashForge/Snapmaker printers, especially concurrent assignment, bed-clearance recycling, printer-local file reuse, and pause/resume behaviour.
+**v0.12.1 regression hardening is complete in code and automated tests.** Next priority is real-hardware validation of production quantities across mixed FlashForge/Snapmaker printers, especially concurrent assignment, bed-clearance recycling, printer-local file reuse, and pause/resume behaviour.
 
 ## Next steps
 
