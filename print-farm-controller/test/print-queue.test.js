@@ -139,6 +139,52 @@ test('cancelling an active queued print also cancels the printer job', async () 
   service.stop();
 });
 
+test('cancelled automatic queue history can be reprinted with the same staged file and options', async () => {
+  const fleetState = new FakeFleetState([{ id:'p1', name:'Printer', online:false, status:null }]);
+  const store = memoryStore();
+  const staged = {
+    id:'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+    fileName:'cancel-reprint.gcode',
+    filePath:'/staged/cancel-reprint.gcode',
+    size:123,
+    sha256:'2'.repeat(64),
+    stagedAt:new Date().toISOString(),
+    requirements:{ requiredTools:[0], toolCount:1, usageReliable:true, logicalTools:[{ index:0 }], materialMetadata:{ metadataAvailable:false, materials:[] } }
+  };
+  const service = new PrintQueueService({
+    fleetState,
+    chamberPreheat:{ isActive:() => false, stop:async () => {} },
+    getPrinterFn:async () => ({ id:'p1', name:'Printer' }),
+    adapterResolver:() => ({ capabilities:{ fileUpload:true, localFiles:true, printLocalFile:true }, limits:{ toolCount:1 }, uploadExtensions:['.gcode'] }),
+    loadJobsFn:store.load,
+    saveJobsFn:store.save,
+    getQueueFileFn:async (id) => id === staged.id ? staged : null,
+    pruneQueueFilesFn:async () => 0
+  });
+  await service.start();
+  const original = await service.add({
+    assignmentMode:'automatic',
+    stagedFileId:staged.id,
+    options:{ levelingBeforePrint:false, flowCalibrationBeforePrint:true }
+  });
+  await service.cancel(original.id);
+  const cancelled = service.getJob(original.id);
+  assert.equal(cancelled.status, 'cancelled');
+  assert.equal(service.getSnapshot().history, 1);
+
+  const reprinted = await service.reprint(original.id);
+  assert.notEqual(reprinted.id, original.id);
+  assert.equal(reprinted.status, 'queued');
+  assert.equal(reprinted.assignmentMode, 'automatic');
+  assert.equal(reprinted.printerId, null);
+  assert.equal(reprinted.fileName, staged.fileName);
+  assert.equal(reprinted.stagedFile.id, staged.id);
+  assert.equal(reprinted.options.levelingBeforePrint, false);
+  assert.equal(reprinted.options.flowCalibrationBeforePrint, true);
+  assert.equal(service.getJob(original.id).status, 'cancelled');
+  service.stop();
+});
+
 test('queued U1 mapped print refuses to start if a mapped tool changes after queueing', async () => {
   const fleetState = new FakeFleetState([{
     id:'u1', online:true, status:{ status:'printing', fileName:'other.gcode', tools:[

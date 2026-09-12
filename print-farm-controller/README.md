@@ -1,4 +1,6 @@
-# Printer Fleet Controller v0.12.0
+# Printer Fleet Controller v0.12.1
+
+> v0.12.1 adds dedicated regression coverage ensuring a cancelled queued print remains in Recent history and can be reprinted with its original staged file and print options.
 
 > v0.12.0 adds **production quantity / batch printing**. A single staged G-code can represent 2–999 copies, with copies automatically distributed across compatible idle printers. Production batches expose overall progress, per-copy printer/status, pause/resume, cancel remaining copies, and safe quantity changes while retaining existing bed-clearance and preflight protections.
 
