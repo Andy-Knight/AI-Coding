@@ -358,6 +358,25 @@ export class PrintQueueService {
     return { cancelled, batch:this.getProductionBatches().find((batch) => batch.id === batchId) };
   }
 
+  async reprintProduction(batchId) {
+    const jobs = this.getProductionJobs(batchId);
+    if (!jobs.every((job) => TERMINAL_STATES.has(job.status))) {
+      throw new Error('Production batch must be finished before it can be reprinted');
+    }
+    const source = [...jobs].sort((a, b) => Number(a.productionSequence || 0) - Number(b.productionSequence || 0))[0];
+    const stagedFileId = source?.stagedFile?.id || null;
+    if (!stagedFileId) throw new Error('Production batch no longer has a staged controller file');
+    const quantity = Math.max(jobs.length, ...jobs.map((job) => Number(job.productionQuantity || 0)));
+    const options = { ...sanitizeOptions(source.options), toolMap:null, usedLogicalTools:[] };
+    return this.add({
+      assignmentMode:'automatic',
+      fileName:source.fileName,
+      stagedFileId,
+      quantity,
+      options
+    });
+  }
+
   async setProductionQuantity(batchId, quantity) {
     const target = Number(quantity);
     if (!Number.isInteger(target) || target < 1 || target > 999) throw new Error('Production quantity must be a whole number from 1 to 999');

@@ -7,7 +7,7 @@
 - Repository: `Andy-Knight/AI-Coding`
 - Project path: `print-farm-controller/`
 - Branch: `main`
-- Current application version: **0.12.1**
+- Current application version: **0.12.2**
 - Runtime: **Node.js 20+**, ES modules, no npm runtime dependencies.
 - GitHub is the authoritative code baseline.
 
@@ -87,10 +87,12 @@ Manufacturer-specific discovery, capabilities, limits, status normalization, fil
 - v0.12.0 regression suite: **113 passing tests, 0 failures**, including concurrent assignment plus pause/cancel race coverage during staged upload.
 - **v0.12.1 cancelled-history reprint regression:** automated coverage now guarantees a cancelled automatic queued job remains reprintable from Recent history using the same staged controller file and print options; UI coverage verifies cancelled history retains the Reprint action.
 - v0.12.1 regression suite: **115 passing tests, 0 failures**.
+- **v0.12.2 production batch reprint:** finished production batches in Recent history expose **Reprint batch**, creating a fresh automatic batch with the same quantity, staged controller file and print options while preserving the original history.
+- v0.12.2 regression suite: **117 passing tests, 0 failures**.
 
 ## Current task
 
-**v0.12.1 regression hardening is complete in code and automated tests.** Next priority is real-hardware validation of production quantities across mixed FlashForge/Snapmaker printers, especially concurrent assignment, bed-clearance recycling, printer-local file reuse, and pause/resume behaviour.
+**v0.12.2 batch reprint implementation is complete in code and automated tests.** Next priority is real-hardware validation of production quantities across mixed FlashForge/Snapmaker printers, especially concurrent assignment, bed-clearance recycling, printer-local file reuse, and pause/resume behaviour.
 
 ## Next steps
 

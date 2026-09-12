@@ -1,4 +1,6 @@
-# Printer Fleet Controller v0.12.1
+# Printer Fleet Controller v0.12.2
+
+> v0.12.2 adds **Reprint batch** to finished production batches in Recent history. Reprinting creates a new automatic production batch with the same quantity, staged G-code and print options while leaving the original history unchanged.
 
 > v0.12.1 adds dedicated regression coverage ensuring a cancelled queued print remains in Recent history and can be reprinted with its original staged file and print options.
 
