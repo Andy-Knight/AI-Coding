@@ -1,0 +1,35 @@
+name: Validate Printer Fleet Controller v0.12.6
+
+on:
+  push:
+    branches:
+      - feature/snapmaker-rgb-wrap-v0126
+
+permissions:
+  contents: write
+
+jobs:
+  test-and-finalize:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out feature branch
+        uses: actions/checkout@v4
+        with:
+          ref: feature/snapmaker-rgb-wrap-v0126
+          fetch-depth: 0
+
+      - name: Apply v0.12.6 Snapmaker RGB layout update
+        run: python .github/pfc-v0126-snapmaker-rgb-wrap.py
+
+      - name: Run full test suite
+        working-directory: print-farm-controller
+        run: npm test
+
+      - name: Commit tested v0.12.6 update
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/pfc-v0126-snapmaker-rgb-wrap.yml .github/pfc-v0126-snapmaker-rgb-wrap.py
+          git add print-farm-controller
+          git commit -m "Move Snapmaker RGB value to second toolhead line"
+          git push origin HEAD:feature/snapmaker-rgb-wrap-v0126
