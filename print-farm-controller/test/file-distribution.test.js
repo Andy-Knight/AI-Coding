@@ -58,6 +58,29 @@ test('distribution never auto-starts an upload that cannot be verified', async (
   assert.match(result.results[0].error, /Print was not started/);
 });
 
+
+test('distribution rejects a file extension unsupported by the selected printer adapter', async () => {
+  let uploaded = false;
+  const service = new FileDistributionService({
+    fleetState:{ getPrinterState:() => ({ online:true, status:{ status:'ready' } }) },
+    chamberPreheat:{ isActive:() => false, stop:async () => {} },
+    getPrinterFn:async () => ({ id:'u1', name:'U1' }),
+    adapterResolver:() => ({
+      type:'snapmaker-u1', manufacturer:'Snapmaker',
+      capabilities:{ fileUpload:true, localFiles:true, printLocalFile:true },
+      uploadExtensions:['.gcode', '.gco', '.g'],
+      uploadFile:async () => { uploaded = true; },
+      verifyFile:async () => ({ verified:true, source:'moonraker' })
+    }),
+    fileMetadataReader:async () => null,
+    maxConcurrent:1
+  });
+  const result = await service.distribute({ printerIds:['u1'], filePath:'/tmp/part.3mf', fileName:'part.3mf' });
+  assert.equal(uploaded, false);
+  assert.equal(result.results[0].ok, false);
+  assert.match(result.results[0].error, /does not support \.3mf uploads/);
+});
+
 test('verification matches full-storage names before falling back to recent files', async () => {
   const result = await verifyPrinterFile({ id:'a' }, 'Part One.gcode', {
     listAllFilesFn: async () => ['other.gcode', '/data/part one.GCODE'],

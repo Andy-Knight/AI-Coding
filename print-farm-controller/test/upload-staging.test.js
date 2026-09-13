@@ -17,6 +17,8 @@ test('stages a raw browser upload and removes it during cleanup', async () => {
 test('upload filename validation rejects paths and unsupported formats', () => {
   assert.equal(validateUploadFilename('part.gcode'), 'part.gcode');
   assert.equal(validateUploadFilename('model%203mf.3mf'), 'model 3mf.3mf');
+  assert.equal(validateUploadFilename('u1-part.gco'), 'u1-part.gco');
+  assert.equal(validateUploadFilename('u1-part.g'), 'u1-part.g');
   assert.throws(() => validateUploadFilename('../part.gcode'), /must not contain a path/);
-  assert.throws(() => validateUploadFilename('notes.txt'), /\.gcode, \.gx, or \.3mf/);
+  assert.throws(() => validateUploadFilename('notes.txt'), /\.gcode, \.gx, \.3mf, \.gco, or \.g/);
 });
