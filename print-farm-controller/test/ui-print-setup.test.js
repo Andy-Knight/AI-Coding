@@ -14,10 +14,14 @@ test('U1 print setup uses material swatches instead of raw loaded-colour option 
 });
 
 
-test('Snapmaker U1 filament colours display both hexadecimal and RGB values', () => {
-  assert.match(app, /function filamentColorText/);
+test('Snapmaker U1 toolhead status puts RGB colour on a dedicated second line', () => {
+  assert.match(app, /function filamentRgbText/);
   assert.match(app, /RGB\(\$\{red\}, \$\{green\}, \$\{blue\}\)/);
-  assert.match(app, /filamentColorText\(filament\.color\)/);
+  assert.match(app, /data-material-rgb=/);
+  assert.match(app, /printer\.adapterType === 'snapmaker-u1'/);
+  assert.match(app, /rgbLine\?\.classList\.toggle\('hidden', !rgbText\)/);
+  assert.match(styles, /\.material-tool > small\.material-rgb/);
+  assert.doesNotMatch(app, /const values = \[source, reported, filament\.vendor \|\| filament\.manufacturer, filamentColorText\(filament\.color\)\]/);
   assert.match(app, /const details = \[presence, colorText, nozzle\]/);
 });
 
