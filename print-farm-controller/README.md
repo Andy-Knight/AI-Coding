@@ -1,4 +1,6 @@
-# Printer Fleet Controller v0.12.5
+# Printer Fleet Controller v0.12.6
+
+> v0.12.6 keeps the Snapmaker U1 hexadecimal filament colour on the main toolhead metadata line and moves **RGB(r, g, b)** onto its own line so the value fits cleanly inside each toolhead status card. Print setup and material preflight keep the combined hex + RGB display.
 
 > v0.12.5 shows Snapmaker U1 filament colours as both hexadecimal and **RGB(r, g, b)** values in toolhead metadata, material preflight, and physical-head choices.
 

@@ -221,6 +221,7 @@ input:focus,select:focus { border-color:#7a9fbe; }
 .material-tool > b { color:#e4eaf0; font-size:.82rem; margin-bottom:4px; }
 .material-tool > span { color:#9cacb8; font-size:.73rem; }
 .material-tool > small { color:#687986; font-size:.69rem; margin-top:4px; }
+.material-tool > small.material-rgb { color:#8193a2; margin-top:2px; }
 .material-tool.filament-missing > span { color:#df9ba1; }
 .material-swatch { width:20px; height:20px; flex:0 0 auto; border-radius:50%; border:1px solid rgba(255,255,255,.3); box-shadow:inset 0 0 0 1px rgba(0,0,0,.25); }
 .material-swatch.unknown { background:repeating-linear-gradient(45deg,#202a32,#202a32 4px,#111820 4px,#111820 8px); border-color:#3b4853; }

@@ -1419,7 +1419,7 @@ function filamentMetaText(filament = {}) {
   const reported = filament.materialSource === 'manual' && filament.reportedMaterial
     ? `Printer reports ${filament.reportedMaterial}`
     : null;
-  const values = [source, reported, filament.vendor || filament.manufacturer, filamentColorText(filament.color)].filter(Boolean);
+  const values = [source, reported, filament.vendor || filament.manufacturer, normalizeColor(filament.color)].filter(Boolean);
   return values.length ? values.join(' · ') : 'No material metadata';
 }
 
@@ -1441,13 +1441,19 @@ function materialSwatchColor(filament = {}) {
   return /^#[0-9A-Fa-f]{6}$/.test(String(filament.color || '')) ? filament.color : null;
 }
 
-function filamentColorText(value) {
+function filamentRgbText(value) {
   const color = normalizeColor(value);
   if (!color) return null;
   const red = Number.parseInt(color.slice(1, 3), 16);
   const green = Number.parseInt(color.slice(3, 5), 16);
   const blue = Number.parseInt(color.slice(5, 7), 16);
-  return `${color} · RGB(${red}, ${green}, ${blue})`;
+  return `RGB(${red}, ${green}, ${blue})`;
+}
+
+function filamentColorText(value) {
+  const color = normalizeColor(value);
+  if (!color) return null;
+  return `${color} · ${filamentRgbText(color)}`;
 }
 
 function flashForgeMaterialDesignationMarkup(printer, filament = {}) {
@@ -1844,6 +1850,10 @@ function updateOpenPrinterTelemetry() {
       set(`[data-tool-nozzle="${tool.index}"]`, `${nozzleDiameterText(tool.nozzleDiameter)}${tool.nozzleVolumeType ? ` · ${tool.nozzleVolumeType}` : ''}`);
       set(`[data-tool-offset="${tool.index}"]`, toolOffsetText(tool.offset));
       set(`[data-material-meta="${tool.index}"]`, filamentMetaText(filament));
+      const rgbText = filamentRgbText(filament.color);
+      set(`[data-material-rgb="${tool.index}"]`, rgbText || '');
+      const rgbLine = row.querySelector(`[data-material-rgb="${tool.index}"]`);
+      rgbLine?.classList.toggle('hidden', !rgbText);
       row.classList.toggle('filament-missing', filament.present === false);
       row.classList.toggle('filament-loaded', filament.present === true);
       const swatch = row.querySelector('[data-material-swatch]');
@@ -1991,6 +2001,7 @@ async function openPrinter(id) {
           ${capabilities.toolheadNozzleStatus ? `<small data-tool-nozzle="${tool.index}">${escapeHtml(`${nozzleDiameterText(tool.nozzleDiameter)}${tool.nozzleVolumeType ? ` · ${tool.nozzleVolumeType}` : ''}`)}</small>` : ''}
           ${capabilities.toolheadNozzleStatus ? `<small data-tool-offset="${tool.index}">${escapeHtml(toolOffsetText(tool.offset))}</small>` : ''}
           <small data-material-meta="${tool.index}">${escapeHtml(filamentMetaText(filament))}</small>
+          ${printer.adapterType === 'snapmaker-u1' ? `<small class="material-rgb${filamentRgbText(filament.color) ? '' : ' hidden'}" data-material-rgb="${tool.index}">${escapeHtml(filamentRgbText(filament.color) || '')}</small>` : ''}
         </div>`;
       }).join('')}</div>
       ${printer.adapterType === 'flashforge-ad5m' ? flashForgeMaterialDesignationMarkup(printer, tools[0]?.filament || {}) : ''}
