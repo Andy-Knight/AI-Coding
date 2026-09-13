@@ -326,11 +326,20 @@ async function apiRoute(req, res, url) {
   if (action === 'material-designation' && (req.method === 'POST' || req.method === 'DELETE')) {
     if (!adapter.capabilities?.materialDesignation) throw new Error('Manual material designation is not supported by this printer');
     const body = req.method === 'POST' ? await readJson(req) : {};
-    const updated = await setPrinterMaterialDesignation(id, req.method === 'POST' ? body.material : null);
+    const updated = await setPrinterMaterialDesignation(
+      id,
+      req.method === 'POST' ? body.material : null,
+      req.method === 'POST' ? body.color : null
+    );
     if (!updated) throw new Error('Printer not found');
     await fleetState.syncRegistry();
     fleetState.refreshNow(id).catch(() => {});
-    return json(res, 200, { ok: true, printer: publicPrinter(updated), materialDesignation: updated.adapterConfig?.filamentDesignation || null });
+    return json(res, 200, {
+      ok: true,
+      printer: publicPrinter(updated),
+      materialDesignation: updated.adapterConfig?.filamentDesignation || null,
+      materialColorDesignation: updated.adapterConfig?.filamentColorDesignation || null
+    });
   }
 
   if (action === 'nozzle-designation' && (req.method === 'POST' || req.method === 'DELETE')) {

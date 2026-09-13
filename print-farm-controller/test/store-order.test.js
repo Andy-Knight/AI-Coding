@@ -75,16 +75,21 @@ test('FlashForge manual material designation persists without exposing adapter s
       name:'Material Test', host:'10.0.3.1', serialNumber:'SN', checkCode:'CODE',
       adapterConfig:{ secretValue:'keep-private' }
     });
-    const assigned = await store.setPrinterMaterialDesignation(printer.id, 'PETG-CF');
+    const assigned = await store.setPrinterMaterialDesignation(printer.id, 'PETG-CF', '#12ab34');
     assert.equal(assigned.adapterConfig.filamentDesignation, 'PETG-CF');
+    assert.equal(assigned.adapterConfig.filamentColorDesignation, '#12AB34');
     assert.equal(assigned.adapterConfig.secretValue, 'keep-private');
     assert.equal(store.publicPrinter(assigned).materialDesignation, 'PETG-CF');
+    assert.equal(store.publicPrinter(assigned).materialColorDesignation, '#12AB34');
     assert.equal('adapterConfig' in store.publicPrinter(assigned), false);
+    await assert.rejects(() => store.setPrinterMaterialDesignation(printer.id, 'PETG-CF', 'green'), /6-digit hex colour/);
 
-    const cleared = await store.setPrinterMaterialDesignation(printer.id, null);
+    const cleared = await store.setPrinterMaterialDesignation(printer.id, null, null);
     assert.equal(cleared.adapterConfig.filamentDesignation, undefined);
+    assert.equal(cleared.adapterConfig.filamentColorDesignation, undefined);
     assert.equal(cleared.adapterConfig.secretValue, 'keep-private');
     assert.equal(store.publicPrinter(cleared).materialDesignation, null);
+    assert.equal(store.publicPrinter(cleared).materialColorDesignation, null);
   } finally {
     delete process.env.DATA_DIR;
     await rm(dir, { recursive:true, force:true });

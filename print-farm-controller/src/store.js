@@ -95,6 +95,13 @@ function normalizeMaterialDesignation(value) {
   return text;
 }
 
+function normalizeColorDesignation(value) {
+  if (value == null || String(value).trim() === '') return null;
+  const text = String(value).trim().replace(/^0x/i, '').replace(/^#/, '').toUpperCase();
+  if (!/^[0-9A-F]{6}$/.test(text)) throw new Error('Filament colour must be a 6-digit hex colour');
+  return `#${text}`;
+}
+
 function normalizeNozzleDesignation(value) {
   if (value == null || String(value).trim() === '') return null;
   const diameter = Number(value);
@@ -184,15 +191,20 @@ export async function renamePrinter(id, name) {
   return normalizeStoredPrinter(printers[index]);
 }
 
-export async function setPrinterMaterialDesignation(id, material) {
+export async function setPrinterMaterialDesignation(id, material, color = undefined) {
   const printers = await readAll();
   const index = printers.findIndex((printer) => printer.id === id);
   if (index < 0) return null;
 
   const designation = normalizeMaterialDesignation(material);
+  const colorDesignation = color === undefined ? undefined : normalizeColorDesignation(color);
   const adapterConfig = { ...(printers[index].adapterConfig || {}) };
   if (designation) adapterConfig.filamentDesignation = designation;
   else delete adapterConfig.filamentDesignation;
+  if (colorDesignation !== undefined) {
+    if (colorDesignation) adapterConfig.filamentColorDesignation = colorDesignation;
+    else delete adapterConfig.filamentColorDesignation;
+  }
 
   printers[index] = { ...printers[index], adapterConfig };
   await writeAll(printers);
@@ -252,6 +264,7 @@ export function publicPrinter(printer) {
     tcpPort: printer.tcpPort || printer.commandPort || 8899,
     dashboardOrder: Number.isFinite(Number(printer.dashboardOrder)) ? Number(printer.dashboardOrder) : null,
     materialDesignation: String(printer.adapterConfig?.filamentDesignation || '').trim() || null,
+    materialColorDesignation: normalizeColorDesignation(printer.adapterConfig?.filamentColorDesignation),
     nozzleDiameterDesignation: Number.isFinite(Number(printer.adapterConfig?.nozzleDiameterDesignation))
       ? Number(printer.adapterConfig.nozzleDiameterDesignation)
       : null,

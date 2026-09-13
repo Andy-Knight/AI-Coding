@@ -124,14 +124,17 @@ test('FlashForge manual material designation overrides display value while retai
   try {
     const adapter = getPrinterAdapter({
       id:'p-material', adapterType:FLASHFORGE_AD5M_ADAPTER_TYPE, host:'192.168.1.21',
-      serialNumber:'SN', checkCode:'CODE', adapterConfig:{ filamentDesignation:'PETG' }
+      serialNumber:'SN', checkCode:'CODE', adapterConfig:{ filamentDesignation:'PETG', filamentColorDesignation:'#3366cc' }
     });
     const status = await adapter.getStatus();
     const filament = status.tools[0].filament;
     assert.equal(filament.material, 'PETG');
     assert.equal(filament.materialSource, 'manual');
+    assert.equal(filament.color, '#3366CC');
+    assert.equal(filament.colorSource, 'manual');
     assert.equal(filament.manuallyAssigned, true);
     assert.equal(filament.reportedMaterial, 'PLA');
+    assert.equal(filament.reportedColor, null);
   } finally {
     global.fetch = originalFetch;
   }

@@ -82,6 +82,18 @@ test('FlashForge controller nozzle designation blocks an explicit nozzle mismatc
   assert.ok(result.reasons.some((reason) => reason.code === 'nozzle_mismatch'));
 });
 
+
+test('FlashForge controller filament colour blocks an explicit staged-file colour mismatch', () => {
+  const result = evaluateQueueCompatibility({
+    job:{ fileName:'part.gcode', stagedFile:{ requirements:{ requiredTools:[0], toolCount:1, usageReliable:true, logicalTools:[{ index:0, material:'PLA', color:'#FF0000' }] } } },
+    printer:{ id:'ff', name:'AD5M' },
+    state:{ id:'ff', name:'AD5M', online:true, status:{ status:'idle', tools:[{ index:0, filament:{ material:'PLA', color:'#0000FF', colorSource:'manual' } }] } },
+    adapter:{ capabilities:{ fileUpload:true, localFiles:true, printLocalFile:true }, limits:{}, uploadExtensions:['.gcode','.gx','.3mf'] }
+  });
+  assert.equal(result.category, 'blocked');
+  assert.ok(result.reasons.some((reason) => reason.code === 'color_mismatch'));
+});
+
 test('automatic compatibility rejects file types unsupported by a printer adapter', () => {
   const result = evaluateQueueCompatibility({
     job:{ fileName:'project.3mf', stagedFile:{ requirements:{ requiredTools:[], toolCount:0, logicalTools:[] } } },
