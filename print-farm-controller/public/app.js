@@ -1456,6 +1456,36 @@ function filamentColorText(value) {
   return `${color} · ${filamentRgbText(color)}`;
 }
 
+function u1FilamentColorEditState(printer, tool = {}) {
+  const filament = tool.filament || {};
+  if (printer?.adapterType !== 'snapmaker-u1' || !printer?.capabilities?.filamentColorControl) {
+    return { enabled:false, message:'Filament colour editing is unavailable.' };
+  }
+  if (String(printer.status?.status || '').toLowerCase() !== 'idle') {
+    return { enabled:false, message:'Colour can be changed while the U1 is idle.' };
+  }
+  if (filament.present !== true) return { enabled:false, message:`Load filament in T${tool.index} before changing its colour.` };
+  if (filament.officialFilament === true || filament.colorEditable === false) {
+    return { enabled:false, message:'Official Snapmaker RFID filament controls its own colour.' };
+  }
+  if (filament.manuallyAssigned !== true && filament.materialSource !== 'manual') {
+    return { enabled:false, message:'Assign third-party filament on the U1 before changing its colour.' };
+  }
+  return { enabled:true, message:'Writes the colour to the U1 and verifies the printer read-back.' };
+}
+
+function u1FilamentColorControlMarkup(printer, tool = {}) {
+  if (printer?.adapterType !== 'snapmaker-u1' || !printer?.capabilities?.filamentColorControl) return '';
+  const filament = tool.filament || {};
+  const state = u1FilamentColorEditState(printer, tool);
+  const color = normalizeColor(filament.color) || '#FFFFFF';
+  return `<div class="u1-filament-color-control" data-u1-filament-color-control="${tool.index}">
+    <label>Filament colour<input type="color" data-u1-filament-color-input="${tool.index}" value="${escapeHtml(color)}"${state.enabled ? '' : ' disabled'}></label>
+    <button type="button" class="secondary" data-u1-filament-color-save="${tool.index}"${state.enabled ? '' : ' disabled'}>Set on U1</button>
+    <small data-u1-filament-color-help="${tool.index}">${escapeHtml(state.message)}</small>
+  </div>`;
+}
+
 function flashForgeMaterialDesignationMarkup(printer, filament = {}) {
   if (!printer?.capabilities?.materialDesignation) return '';
   const manualValue = filament.materialSource === 'manual'
@@ -1854,6 +1884,16 @@ function updateOpenPrinterTelemetry() {
       set(`[data-material-rgb="${tool.index}"]`, rgbText || '');
       const rgbLine = row.querySelector(`[data-material-rgb="${tool.index}"]`);
       rgbLine?.classList.toggle('hidden', !rgbText);
+      const u1ColorState = u1FilamentColorEditState(printer, tool);
+      const u1ColorInput = row.querySelector(`[data-u1-filament-color-input="${tool.index}"]`);
+      const u1ColorSave = row.querySelector(`[data-u1-filament-color-save="${tool.index}"]`);
+      const u1ColorHelp = row.querySelector(`[data-u1-filament-color-help="${tool.index}"]`);
+      if (u1ColorInput) {
+        if (document.activeElement !== u1ColorInput) u1ColorInput.value = normalizeColor(filament.color) || '#FFFFFF';
+        u1ColorInput.disabled = !u1ColorState.enabled;
+      }
+      if (u1ColorSave) u1ColorSave.disabled = !u1ColorState.enabled;
+      if (u1ColorHelp) u1ColorHelp.textContent = u1ColorState.message;
       row.classList.toggle('filament-missing', filament.present === false);
       row.classList.toggle('filament-loaded', filament.present === true);
       const swatch = row.querySelector('[data-material-swatch]');
@@ -1986,7 +2026,7 @@ async function openPrinter(id) {
     if (!tools.length) return `<div class="panel material-panel"><h3>Toolhead status</h3><div class="subtle">Material status is unavailable while the printer is offline.</div>${flashForgeMaterialDesignationMarkup(printer)}${flashForgeNozzleDesignationMarkup(printer)}</div>`;
     const materialHelp = printer.adapterType === 'flashforge-ad5m'
       ? "Filament type uses the controller's manual designation when set, otherwise the value reported by the FlashForge 5M local /detail API. Installed nozzle size uses the controller nozzle designation when set because the 5M API does not reliably expose it. The 5M API also does not expose U1-style filament colour/RFID metadata or a reliable live filament-presence value."
-      : 'Filament presence comes from each U1 motion sensor. Material and colour use the U1\'s effective per-tool configuration, including manual assignments for third-party filament; RFID data is used as fallback. Nozzle size and XYZ offset come directly from each physical U1 extruder.';
+      : 'Filament presence comes from each U1 motion sensor. Material and colour use the U1\'s effective per-tool configuration, including manual assignments for third-party filament; manually assigned filament colours can be written back to the idle printer. Official Snapmaker RFID colours remain locked. Nozzle size and XYZ offset come directly from each physical U1 extruder.';
     return `<div class="panel material-panel">
       <h3>Toolhead status</h3>
       <div class="material-summary" data-material-summary>${escapeHtml(materialSummaryText(tools))}</div>
@@ -2002,6 +2042,7 @@ async function openPrinter(id) {
           ${capabilities.toolheadNozzleStatus ? `<small data-tool-offset="${tool.index}">${escapeHtml(toolOffsetText(tool.offset))}</small>` : ''}
           <small data-material-meta="${tool.index}">${escapeHtml(filamentMetaText(filament))}</small>
           ${['snapmaker-u1','flashforge-ad5m'].includes(printer.adapterType) ? `<small class="material-rgb${filamentRgbText(filament.color) ? '' : ' hidden'}" data-material-rgb="${tool.index}">${escapeHtml(filamentRgbText(filament.color) || '')}</small>` : ''}
+          ${printer.adapterType === 'snapmaker-u1' ? u1FilamentColorControlMarkup(printer, tool) : ''}
         </div>`;
       }).join('')}</div>
       ${printer.adapterType === 'flashforge-ad5m' ? flashForgeMaterialDesignationMarkup(printer, tools[0]?.filament || {}) : ''}
@@ -2279,6 +2320,26 @@ ${flashForgePreflight}` : ''}`)) return;
       printerDialog.close();
     } catch (error) { showError(error); }
   });
+  printerDetail.querySelectorAll('[data-u1-filament-color-save]').forEach((button) => button.onclick = async () => {
+    const toolIndex = Number(button.dataset.u1FilamentColorSave);
+    const input = printerDetail.querySelector(`[data-u1-filament-color-input="${toolIndex}"]`);
+    const color = normalizeColor(input?.value);
+    if (!color) { showError(new Error('Choose a valid filament colour.')); return; }
+    const original = button.textContent;
+    button.disabled = true;
+    button.textContent = 'Setting…';
+    try {
+      const result = await api(`/api/printers/${id}/filament-color`, { method:'POST', body:JSON.stringify({ toolIndex, color }) });
+      const tool = printer.status?.tools?.find((item) => Number(item.index) === toolIndex);
+      if (tool?.filament) {
+        tool.filament.color = result.color;
+        tool.filament.metadataAvailable = true;
+      }
+      updateOpenPrinterTelemetry();
+    } catch (error) { showError(error); }
+    finally { button.textContent = original; updateOpenPrinterTelemetry(); }
+  });
+
   const materialDesignationSave = printerDetail.querySelector('[data-material-designation-save]');
   if (materialDesignationSave) materialDesignationSave.onclick = async () => {
     const input = printerDetail.querySelector('[data-material-designation-input]');

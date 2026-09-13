@@ -161,6 +161,7 @@ export function normalizeSnapmakerFilament(objects = {}) {
     const configuredColor = filamentRgbaHex(arrayValue(taskConfig, 'filament_color_rgba', index));
     const configuredOfficial = arrayValue(taskConfig, 'filament_official', index);
     const configuredExists = arrayValue(taskConfig, 'filament_exist', index);
+    const configuredEditable = arrayValue(taskConfig, 'filament_edit', index);
     const configuredMeaningful = Boolean(configuredVendor || configuredMaterial || configuredVariant ||
       (configuredColor && configuredColor !== '#FFFFFF'));
 
@@ -185,6 +186,7 @@ export function normalizeSnapmakerFilament(objects = {}) {
       manuallyAssigned: materialSource === 'manual',
       officialFilament: configuredOfficial === true,
       configuredExists: typeof configuredExists === 'boolean' ? configuredExists : null,
+      colorEditable: typeof configuredEditable === 'boolean' ? configuredEditable : (configuredOfficial === true ? false : null),
       vendor,
       manufacturer,
       material,
@@ -633,6 +635,50 @@ function validateTemperature(value, max, label) {
   const number = Number(value);
   if (!Number.isFinite(number) || number < 0 || number > max) throw new MoonrakerApiError(`${label} must be 0-${max} C`);
   return number;
+}
+
+export async function setMoonrakerFilamentColor(printer, { toolIndex, color } = {}) {
+  const index = Number(toolIndex);
+  if (!Number.isInteger(index) || index < 0 || index >= SNAPMAKER_U1_TOOL_COUNT) {
+    throw new MoonrakerApiError('Tool index must be 0-3');
+  }
+  const normalizedColor = normalizeHexColor(color);
+  if (!normalizedColor || !/^#[0-9A-F]{6}$/.test(normalizedColor)) {
+    throw new MoonrakerApiError('Filament colour must be a 6-digit RGB hex value');
+  }
+
+  const current = await moonrakerRequest(printer, '/printer/objects/query?print_stats&print_task_config');
+  const status = current?.status || current || {};
+  const printState = String(status.print_stats?.state || 'unknown').toLowerCase();
+  if (!['standby', 'complete', 'cancelled'].includes(printState)) {
+    throw new MoonrakerApiError('U1 filament colour can only be changed while the printer is idle');
+  }
+
+  const taskConfig = status.print_task_config || {};
+  const exists = arrayValue(taskConfig, 'filament_exist', index);
+  if (exists !== true) throw new MoonrakerApiError(`No filament is loaded in U1 T${index}`);
+
+  const material = cleanFilamentText(arrayValue(taskConfig, 'filament_type', index));
+  const official = arrayValue(taskConfig, 'filament_official', index);
+  const editable = arrayValue(taskConfig, 'filament_edit', index);
+  if (!material) throw new MoonrakerApiError(`U1 T${index} has no manually assigned filament material to edit`);
+  if (official === true || editable === false) {
+    throw new MoonrakerApiError(`U1 T${index} colour is locked by its official Snapmaker RFID filament`);
+  }
+
+  const rgba = `${normalizedColor.slice(1)}FF`;
+  await runMoonrakerGcode(
+    printer,
+    `SET_PRINT_FILAMENT_CONFIG CONFIG_EXTRUDER='${index}' FILAMENT_COLOR_RGBA='${rgba}' SAVE='1'`
+  );
+
+  const verified = await moonrakerRequest(printer, '/printer/objects/query?print_task_config');
+  const verifiedStatus = verified?.status || verified || {};
+  const reported = String(arrayValue(verifiedStatus.print_task_config || {}, 'filament_color_rgba', index) || '').toUpperCase();
+  if (reported !== rgba) {
+    throw new MoonrakerApiError(`U1 did not confirm the filament colour change for T${index}`);
+  }
+  return { toolIndex:index, color:normalizedColor, rgba, verified:true };
 }
 
 export async function setMoonrakerTemperatures(printer, { nozzle, bed, toolIndex, allTools = false } = {}) {

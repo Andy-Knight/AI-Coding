@@ -26,6 +26,7 @@ export const DEFAULT_CAPABILITIES = Object.freeze({
   chamberTemperatureSensor: false,
   materialStatus: false,
   materialDesignation: false,
+  filamentColorControl: false,
   nozzleDesignation: false,
   printToolMapping: false,
   flowCalibrationBeforePrint: false,
@@ -66,6 +67,7 @@ export class PrinterAdapter {
   async setTemperatures() { return this.unsupported('Temperature control'); }
   async setFans() { return this.unsupported('Fan control'); }
   async setFiltration() { return this.unsupported('Filtration control'); }
+  async setFilamentColor() { return this.unsupported('Filament colour control'); }
   // Optional lifecycle hooks used by the generic bounded chamber-preheat service.
   // Adapters that need printer-native circulation/mode changes can override them.
   async prepareChamberPreheat() { return null; }
