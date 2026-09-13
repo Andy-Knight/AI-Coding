@@ -1,4 +1,6 @@
-# Printer Fleet Controller v0.12.4
+# Printer Fleet Controller v0.12.5
+
+> v0.12.5 shows Snapmaker U1 filament colours as both hexadecimal and **RGB(r, g, b)** values in toolhead metadata, material preflight, and physical-head choices.
 
 > v0.12.4 adds a persistent **filament colour designation** alongside material type for FlashForge printers. The printer window now provides a colour picker; the controller-normalized tool state and automatic queue compatibility use the assigned colour, including blocking explicit colour mismatches.
 

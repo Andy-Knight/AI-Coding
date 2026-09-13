@@ -1419,7 +1419,7 @@ function filamentMetaText(filament = {}) {
   const reported = filament.materialSource === 'manual' && filament.reportedMaterial
     ? `Printer reports ${filament.reportedMaterial}`
     : null;
-  const values = [source, reported, filament.vendor || filament.manufacturer, filament.color].filter(Boolean);
+  const values = [source, reported, filament.vendor || filament.manufacturer, filamentColorText(filament.color)].filter(Boolean);
   return values.length ? values.join(' · ') : 'No material metadata';
 }
 
@@ -1439,6 +1439,15 @@ function materialSummaryText(tools = []) {
 
 function materialSwatchColor(filament = {}) {
   return /^#[0-9A-Fa-f]{6}$/.test(String(filament.color || '')) ? filament.color : null;
+}
+
+function filamentColorText(value) {
+  const color = normalizeColor(value);
+  if (!color) return null;
+  const red = Number.parseInt(color.slice(1, 3), 16);
+  const green = Number.parseInt(color.slice(3, 5), 16);
+  const blue = Number.parseInt(color.slice(5, 7), 16);
+  return `${color} · RGB(${red}, ${green}, ${blue})`;
 }
 
 function flashForgeMaterialDesignationMarkup(printer, filament = {}) {
@@ -1556,7 +1565,8 @@ function materialPreflightText(printer) {
     const filament = tool.filament || {};
     const presence = filament.present === true ? 'filament detected' : filament.present === false ? 'NO FILAMENT' : 'sensor unknown';
     const material = filament.metadataAvailable ? filamentMaterialName(filament) : 'material unknown';
-    const color = filament.color ? ` · ${filament.color}` : '';
+    const colorText = filamentColorText(filament.color);
+    const color = colorText ? ` · ${colorText}` : '';
     const source = filament.materialSource === 'manual' ? ' · manually assigned' : filament.materialSource === 'rfid' ? ' · RFID' : '';
     return `T${tool.index}: ${presence} · ${material}${color}${source}`;
   });
@@ -1608,10 +1618,12 @@ function physicalToolChoiceMarkup(tool, { summary = false, selected = false } = 
   const filament = tool?.filament || {};
   const material = filamentMaterialName(filament);
   const color = materialSwatchColor(filament);
+  const colorText = filamentColorText(filament.color);
   const presence = filamentPresenceText(filament);
   const nozzle = nozzleDiameterText(tool?.nozzleDiameter);
   const swatch = `<span class="material-swatch${color ? '' : ' unknown'}"${color ? ` style="background:${escapeHtml(color)}"` : ''} title="${escapeHtml(color ? 'Configured filament colour' : 'Colour unknown')}"></span>`;
-  const text = `<span class="tool-map-choice-text"><strong>T${tool.index} · ${escapeHtml(material)}</strong><small>${escapeHtml(`${presence} · ${nozzle}`)}</small></span>`;
+  const details = [presence, colorText, nozzle].filter(Boolean).join(' · ');
+  const text = `<span class="tool-map-choice-text"><strong>T${tool.index} · ${escapeHtml(material)}</strong><small>${escapeHtml(details)}</small></span>`;
   if (summary) return `<span class="tool-map-selected">${swatch}${text}</span><span class="tool-map-caret" aria-hidden="true">▾</span>`;
   return `<button type="button" class="tool-map-option${selected ? ' selected' : ''}" data-tool-map-option="${tool.index}">${swatch}${text}</button>`;
 }
