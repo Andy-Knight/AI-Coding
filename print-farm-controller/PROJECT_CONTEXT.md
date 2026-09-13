@@ -7,7 +7,7 @@
 - Repository: `Andy-Knight/AI-Coding`
 - Project path: `print-farm-controller/`
 - Branch: `main`
-- Current application version: **0.12.6**
+- Current application version: **0.12.7**
 - Runtime: **Node.js 20+**, ES modules, no npm runtime dependencies.
 - GitHub is the authoritative code baseline.
 
@@ -95,10 +95,11 @@ Manufacturer-specific discovery, capabilities, limits, status normalization, fil
 - **v0.12.5 Snapmaker RGB colour display:** U1 filament colours are shown as both `#RRGGBB` and `RGB(r, g, b)` in toolhead metadata, print setup physical-head choices, and material preflight.
 - v0.12.5 regression suite: **121 passing tests, 0 failures**.
 - **v0.12.6 Snapmaker RGB toolhead layout:** U1 toolhead status keeps the hexadecimal colour on the metadata line and renders `RGB(r, g, b)` on a separate line to prevent overflow; print setup and material preflight retain combined hex + RGB text.
+- **v0.12.7 FlashForge RGB colour display:** controller-assigned FlashForge filament colours now show the stored `#RRGGBB` value plus `RGB(r, g, b)` in Toolhead status; queue compatibility semantics are unchanged.
 
 ## Current task
 
-**v0.12.6 Snapmaker RGB toolhead layout is complete in code and automated tests.** Next priority is real-hardware validation that the split RGB line fits cleanly in all four U1 toolhead cards and that FlashForge colour assignments influence compatibility as expected.
+**v0.12.7 FlashForge RGB colour display is complete in code and automated tests.** Next priority is real-hardware validation that assigned FlashForge colours show correctly in both hex and RGB and continue to influence compatibility as expected.
 
 ## Next steps
 
