@@ -18,6 +18,19 @@ jobs:
           ref: feature/individual-printer-upload-v0123
           fetch-depth: 0
 
+      - name: Normalize README release-note patch target
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('print-farm-controller/README.md')
+          text = path.read_text(encoding='utf-8')
+          old = '> v0.12.2 adds **Reprint batch** to finished production batches in Recent history. Reprinting creates a new automatic production batch with the same quantity, staged G-code and print options while leaving the original history unchanged.\n'
+          new = '> v0.12.2 adds **Reprint batch** to finished production batches in Recent history. Reprinting creates a new automatic production batch with the same quantity, staged controller file and print options while preserving the original history.\n'
+          if old not in text:
+              raise SystemExit('README v0.12.2 release note not found')
+          path.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
+
       - name: Apply v0.12.3 individual upload update
         run: python .github/pfc-v0123-individual-upload.py
 
