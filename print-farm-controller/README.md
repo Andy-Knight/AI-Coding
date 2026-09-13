@@ -1,4 +1,6 @@
-# Printer Fleet Controller v0.12.3
+# Printer Fleet Controller v0.12.4
+
+> v0.12.4 adds a persistent **filament colour designation** alongside material type for FlashForge printers. The printer window now provides a colour picker; the controller-normalized tool state and automatic queue compatibility use the assigned colour, including blocking explicit colour mismatches.
 
 > v0.12.3 adds **Upload file** inside each supported printer window. Individual uploads use the printer adapter's declared file types, are verified in printer storage before reporting success, save available material metadata, and refresh the printer file list after upload.
 

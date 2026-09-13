@@ -100,16 +100,22 @@ export class FlashForgeAd5mAdapter extends PrinterAdapter {
     const filament = status?.tools?.[0]?.filament;
     if (filament) {
       const reportedMaterial = filament.material || null;
+      const reportedColor = filament.color || null;
       const manualMaterial = String(this.printer.adapterConfig?.filamentDesignation || '').trim() || null;
+      const manualColorRaw = String(this.printer.adapterConfig?.filamentColorDesignation || '').trim();
+      const manualColor = /^#[0-9A-Fa-f]{6}$/.test(manualColorRaw) ? manualColorRaw.toUpperCase() : null;
       filament.reportedMaterial = reportedMaterial;
+      filament.reportedColor = reportedColor;
       if (manualMaterial) {
         filament.material = manualMaterial;
         filament.materialSource = 'manual';
-        filament.manuallyAssigned = true;
-        filament.metadataAvailable = true;
-      } else {
-        filament.manuallyAssigned = false;
       }
+      if (manualColor) {
+        filament.color = manualColor;
+        filament.colorSource = 'manual';
+      }
+      filament.manuallyAssigned = Boolean(manualMaterial || manualColor);
+      if (manualMaterial || manualColor) filament.metadataAvailable = true;
     }
 
     const tool = status?.tools?.[0];

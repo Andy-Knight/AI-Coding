@@ -7,7 +7,7 @@
 - Repository: `Andy-Knight/AI-Coding`
 - Project path: `print-farm-controller/`
 - Branch: `main`
-- Current application version: **0.12.3**
+- Current application version: **0.12.4**
 - Runtime: **Node.js 20+**, ES modules, no npm runtime dependencies.
 - GitHub is the authoritative code baseline.
 
@@ -91,10 +91,11 @@ Manufacturer-specific discovery, capabilities, limits, status normalization, fil
 - v0.12.2 regression suite: **117 passing tests, 0 failures**.
 - **v0.12.3 individual printer upload:** supported printer detail windows expose **Upload file**; uploads are adapter-extension-aware, use the existing verified file-distribution path for one target printer, persist available material metadata, and refresh the printer file list after success.
 - v0.12.3 regression suite: **119 passing tests, 0 failures**.
+- **v0.12.4 FlashForge filament colour designation:** FlashForge printer detail controls now persist both material type and `#RRGGBB` filament colour; the assigned colour is normalized into tool status and participates in automatic queue compatibility/mismatch blocking.
 
 ## Current task
 
-**v0.12.3 individual-printer file upload is complete in code and automated tests.** Next priority is real-hardware validation of direct uploads and production quantities across mixed FlashForge/Snapmaker printers, especially upload verification, concurrent assignment, bed-clearance recycling, printer-local file reuse, and pause/resume behaviour.
+**v0.12.4 FlashForge filament colour designation is complete in code and automated tests.** Next priority is real-hardware validation that material/colour assignments render correctly and influence automatic compatibility as expected.
 
 ## Next steps
 

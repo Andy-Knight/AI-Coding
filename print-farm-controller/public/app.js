@@ -1446,16 +1446,25 @@ function flashForgeMaterialDesignationMarkup(printer, filament = {}) {
   const manualValue = filament.materialSource === 'manual'
     ? String(filament.material || '')
     : String(printer.materialDesignation || '');
+  const manualColor = filament.colorSource === 'manual'
+    ? String(filament.color || '')
+    : String(printer.materialColorDesignation || '');
+  const colorValue = /^#[0-9A-Fa-f]{6}$/.test(manualColor) ? manualColor : '#FFFFFF';
   const reported = filament.reportedMaterial || (filament.materialSource === 'printer' ? filament.material : null);
   const clearLabel = reported ? 'Use printer value' : 'Clear designation';
   const options = ['PLA','PETG','ABS','ASA','TPU','PC','PA','Nylon','PVA','HIPS','PP','PET','PLA-CF','PETG-CF','ASA-CF','PA-CF','PC-CF'];
   return `<div class="material-designation-control">
-    <label>Controller material designation
-      <input type="text" data-material-designation-input value="${escapeHtml(manualValue)}" list="flashforgeMaterialTypes" maxlength="48" placeholder="e.g. PLA, PETG, ASA" autocomplete="off" />
-    </label>
+    <div class="material-designation-fields">
+      <label>Controller material type
+        <input type="text" data-material-designation-input value="${escapeHtml(manualValue)}" list="flashforgeMaterialTypes" maxlength="48" placeholder="e.g. PLA, PETG, ASA" autocomplete="off" />
+      </label>
+      <label>Controller filament colour
+        <input type="color" data-material-color-input value="${escapeHtml(colorValue)}" aria-label="Controller filament colour" />
+      </label>
+    </div>
     <datalist id="flashforgeMaterialTypes">${options.map((value) => `<option value="${escapeHtml(value)}"></option>`).join('')}</datalist>
-    <div class="mini-actions"><button type="button" class="secondary" data-material-designation-save>Assign material</button><button type="button" class="secondary" data-material-designation-clear>${escapeHtml(clearLabel)}</button></div>
-    <div class="field-help">Stored by Printer Fleet Controller for this printer. It overrides the FlashForge-reported type in controller displays until cleared.${reported ? ` Printer currently reports ${escapeHtml(reported)}.` : ''}</div>
+    <div class="mini-actions"><button type="button" class="secondary" data-material-designation-save>Assign filament</button><button type="button" class="secondary" data-material-designation-clear>${escapeHtml(clearLabel)}</button></div>
+    <div class="field-help">Stored by Printer Fleet Controller for this printer. Material and colour are used by automatic queue compatibility until cleared.${reported ? ` Printer currently reports material ${escapeHtml(reported)}.` : ''}</div>
   </div>`;
 }
 
@@ -2250,19 +2259,26 @@ ${flashForgePreflight}` : ''}`)) return;
   const materialDesignationSave = printerDetail.querySelector('[data-material-designation-save]');
   if (materialDesignationSave) materialDesignationSave.onclick = async () => {
     const input = printerDetail.querySelector('[data-material-designation-input]');
+    const colorInput = printerDetail.querySelector('[data-material-color-input]');
     const material = String(input?.value || '').trim();
+    const color = String(colorInput?.value || '').trim().toUpperCase();
     if (!material) { showError(new Error('Enter a material type to assign, or use Clear designation.')); return; }
+    if (!/^#[0-9A-F]{6}$/.test(color)) { showError(new Error('Choose a filament colour.')); return; }
     const original = materialDesignationSave.textContent;
     materialDesignationSave.disabled = true;
     materialDesignationSave.textContent = 'Saving…';
     try {
-      await api(`/api/printers/${id}/material-designation`, { method:'POST', body: JSON.stringify({ material }) });
+      await api(`/api/printers/${id}/material-designation`, { method:'POST', body: JSON.stringify({ material, color }) });
       printer.materialDesignation = material;
+      printer.materialColorDesignation = color;
       const filament = printer.status?.tools?.[0]?.filament;
       if (filament) {
         if (!filament.reportedMaterial && filament.materialSource === 'printer') filament.reportedMaterial = filament.material || null;
+        if (!filament.reportedColor && filament.colorSource === 'printer') filament.reportedColor = filament.color || null;
         filament.material = material;
         filament.materialSource = 'manual';
+        filament.color = color;
+        filament.colorSource = 'manual';
         filament.manuallyAssigned = true;
         filament.metadataAvailable = true;
         updateOpenPrinterTelemetry();
@@ -2278,16 +2294,20 @@ ${flashForgePreflight}` : ''}`)) return;
     try {
       await api(`/api/printers/${id}/material-designation`, { method:'DELETE' });
       printer.materialDesignation = null;
+      printer.materialColorDesignation = null;
       const filament = printer.status?.tools?.[0]?.filament;
       if (filament) {
         filament.material = filament.reportedMaterial || null;
         filament.materialSource = filament.reportedMaterial ? 'printer' : null;
+        filament.color = filament.reportedColor || null;
+        filament.colorSource = filament.reportedColor ? 'printer' : null;
         filament.manuallyAssigned = false;
-        filament.metadataAvailable = Boolean(filament.reportedMaterial);
         updateOpenPrinterTelemetry();
       }
       const input = printerDetail.querySelector('[data-material-designation-input]');
       if (input) input.value = '';
+      const colorInput = printerDetail.querySelector('[data-material-color-input]');
+      if (colorInput) colorInput.value = '#FFFFFF';
     } catch (error) { showError(error); }
     finally { materialDesignationClear.disabled = false; materialDesignationClear.textContent = original; }
   };
