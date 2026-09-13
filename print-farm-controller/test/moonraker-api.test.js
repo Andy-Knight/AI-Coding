@@ -12,6 +12,7 @@ import {
   setMoonrakerTemperatures,
   setMoonrakerFans,
   setMoonrakerFiltration,
+  setMoonrakerFilamentColor,
   startMoonrakerChamberPreheat,
   stopMoonrakerChamberPreheat,
   levelMoonrakerBed,
@@ -161,6 +162,7 @@ test('U1 material normalization prefers manual print-task assignments over RFID 
       filament_color_rgba:['CC2200FF','445566FF','FFFFFFFF','FFFFFFFF'],
       filament_official:[false,true,false,false],
       filament_exist:[true,true,true,false],
+      filament_edit:[true,false,true,false],
       time_lapse_camera:true,
       auto_replenish_filament:false,
       replenish_ignore_color:false,
@@ -182,12 +184,14 @@ test('U1 material normalization prefers manual print-task assignments over RFID 
   assert.equal(t0.materialSource, 'manual');
   assert.equal(t0.manuallyAssigned, true);
   assert.equal(t0.rfidMetadataAvailable, true);
+  assert.equal(t0.colorEditable, true);
 
   const t1 = status.tools[1].filament;
   assert.equal(t1.material, 'PLA');
   assert.equal(t1.color, '#445566');
   assert.equal(t1.materialSource, 'rfid');
   assert.equal(t1.officialFilament, true);
+  assert.equal(t1.colorEditable, false);
 
   // With no meaningful manual assignment, raw RFID remains the fallback.
   const t2 = status.tools[2].filament;
@@ -219,6 +223,7 @@ test('U1 adapter exposes Moonraker capabilities and printer-specific thermal lim
   assert.equal(adapter.capabilities.levelBeforePrint, true);
   assert.equal(adapter.capabilities.chamberPreheat, true);
   assert.equal(adapter.capabilities.materialStatus, true);
+  assert.equal(adapter.capabilities.filamentColorControl, true);
   assert.equal(adapter.capabilities.timeLapseBeforePrint, true);
   assert.equal(adapter.capabilities.autoFilamentReplenishment, true);
   assert.equal(adapter.capabilities.filamentEntanglementDetection, true);
@@ -276,6 +281,78 @@ test('orders Moonraker files by last printed history before remaining files', ()
     { filename:'alpha.gcode' }
   ]);
   assert.deepEqual(ordered.map((item) => item.path), ['fixture.gcode', 'alpha.gcode', 'zeta.gcode']);
+});
+
+
+test('U1 manual filament colour uses the touchscreen-native command and verifies printer read-back', async () => {
+  const scripts = [];
+  let reportedColor = '112233FF';
+  const { server, port } = await listen((req, res) => {
+    const url = new URL(req.url, 'http://localhost');
+    if (url.pathname === '/printer/objects/query') {
+      const wantsPrintStats = url.search.includes('print_stats');
+      res.writeHead(200, { 'content-type':'application/json' });
+      res.end(JSON.stringify({ result:{ status:{
+        ...(wantsPrintStats ? { print_stats:{ state:'standby' } } : {}),
+        print_task_config:{
+          filament_exist:[true,false,false,false],
+          filament_edit:[true,false,false,false],
+          filament_official:[false,false,false,false],
+          filament_type:['PETG','NONE','NONE','NONE'],
+          filament_color_rgba:[reportedColor,'FFFFFFFF','FFFFFFFF','FFFFFFFF']
+        }
+      } } }));
+      return;
+    }
+    if (url.pathname === '/printer/gcode/script') {
+      scripts.push(url.searchParams.get('script'));
+      reportedColor = 'A1B2C3FF';
+      res.writeHead(200, { 'content-type':'application/json' });
+      res.end(JSON.stringify({ result:'ok' }));
+      return;
+    }
+    res.writeHead(404); res.end();
+  });
+  const printer = { host:'127.0.0.1', httpPort:port, adapterConfig:{} };
+  try {
+    const result = await setMoonrakerFilamentColor(printer, { toolIndex:0, color:'#A1B2C3' });
+    assert.equal(scripts[0], "SET_PRINT_FILAMENT_CONFIG CONFIG_EXTRUDER='0' FILAMENT_COLOR_RGBA='A1B2C3FF' SAVE='1'");
+    assert.deepEqual(result, { toolIndex:0, color:'#A1B2C3', rgba:'A1B2C3FF', verified:true });
+  } finally {
+    await close(server);
+  }
+});
+
+test('U1 filament colour write refuses busy, empty, and RFID-locked toolheads', async () => {
+  let state = 'printing';
+  let exists = true;
+  let official = false;
+  let editable = true;
+  const { server, port } = await listen((req, res) => {
+    const url = new URL(req.url, 'http://localhost');
+    if (url.pathname !== '/printer/objects/query') { res.writeHead(404); res.end(); return; }
+    res.writeHead(200, { 'content-type':'application/json' });
+    res.end(JSON.stringify({ result:{ status:{
+      print_stats:{ state },
+      print_task_config:{
+        filament_exist:[exists,false,false,false],
+        filament_edit:[editable,false,false,false],
+        filament_official:[official,false,false,false],
+        filament_type:['PLA','NONE','NONE','NONE'],
+        filament_color_rgba:['112233FF','FFFFFFFF','FFFFFFFF','FFFFFFFF']
+      }
+    } } }));
+  });
+  const printer = { host:'127.0.0.1', httpPort:port, adapterConfig:{} };
+  try {
+    await assert.rejects(() => setMoonrakerFilamentColor(printer, { toolIndex:0, color:'#334455' }), /only be changed while the printer is idle/);
+    state = 'standby'; exists = false;
+    await assert.rejects(() => setMoonrakerFilamentColor(printer, { toolIndex:0, color:'#334455' }), /No filament is loaded/);
+    exists = true; official = true; editable = false;
+    await assert.rejects(() => setMoonrakerFilamentColor(printer, { toolIndex:0, color:'#334455' }), /locked by its official Snapmaker RFID filament/);
+  } finally {
+    await close(server);
+  }
 });
 
 test('tool-specific and all-tool U1 temperature commands use native Klipper heater names', async () => {

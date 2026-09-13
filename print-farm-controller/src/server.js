@@ -323,6 +323,14 @@ async function apiRoute(req, res, url) {
     return json(res, 200, { status: await adapter.getStatus(), capabilities: adapter.capabilities, limits: adapter.limits });
   }
 
+  if (req.method === 'POST' && action === 'filament-color') {
+    if (!adapter.capabilities?.filamentColorControl) throw new Error('Filament colour control is not supported by this printer');
+    const body = await readJson(req);
+    const result = await adapter.setFilamentColor({ toolIndex:body.toolIndex, color:body.color });
+    refreshAfterCommand(id);
+    return json(res, 200, { ok:true, ...result });
+  }
+
   if (action === 'material-designation' && (req.method === 'POST' || req.method === 'DELETE')) {
     if (!adapter.capabilities?.materialDesignation) throw new Error('Manual material designation is not supported by this printer');
     const body = req.method === 'POST' ? await readJson(req) : {};

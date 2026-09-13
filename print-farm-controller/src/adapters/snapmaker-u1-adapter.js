@@ -11,6 +11,7 @@ import {
   setMoonrakerTemperatures,
   setMoonrakerFans,
   setMoonrakerFiltration,
+  setMoonrakerFilamentColor,
   startMoonrakerChamberPreheat,
   stopMoonrakerChamberPreheat,
   levelMoonrakerBed,
@@ -67,6 +68,7 @@ const CAPABILITIES = normalizeCapabilities({
   chamberPreheat: true,
   chamberTemperatureSensor: true,
   materialStatus: true,
+  filamentColorControl: true,
   printToolMapping: true,
   flowCalibrationBeforePrint: true,
   timeLapseBeforePrint: true,
@@ -103,6 +105,7 @@ export class SnapmakerU1Adapter extends PrinterAdapter {
   async setTemperatures(values) { return setMoonrakerTemperatures(this.printer, values); }
   async setFans(values) { return setMoonrakerFans(this.printer, values); }
   async setFiltration(values) { return setMoonrakerFiltration(this.printer, values); }
+  async setFilamentColor(values) { return setMoonrakerFilamentColor(this.printer, values); }
   async prepareChamberPreheat(_options = {}, { status } = {}) {
     if (status?.filtration?.available === false) {
       throw new Error('Snapmaker U1 chamber preheat requires the purifier/top-cover hardware');

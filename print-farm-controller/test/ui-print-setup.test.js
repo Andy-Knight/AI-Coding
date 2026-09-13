@@ -35,6 +35,17 @@ test('FlashForge assigned filament colour shows hexadecimal and RGB values in to
 });
 
 
+
+test('Snapmaker U1 manual filament colour control writes colour to the printer', () => {
+  assert.match(app, /function u1FilamentColorEditState/);
+  assert.match(app, /data-u1-filament-color-input/);
+  assert.match(app, /data-u1-filament-color-save/);
+  assert.match(app, /Set on U1/);
+  assert.match(app, /\/filament-color/);
+  assert.match(app, /Official Snapmaker RFID filament controls its own colour/);
+  assert.match(styles, /\.u1-filament-color-control/);
+});
+
 test('U1 print setup exposes native timelapse and filament safety controls', () => {
   assert.match(app, /id=\"printSetupTimeLapse\"/);
   assert.match(app, /id=\"printSetupAutoReplenish\"/);
