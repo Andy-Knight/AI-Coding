@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { getPrinter } from './store.js';
 import { getPrinterAdapter } from './adapters/adapter-registry.js';
 import { isPrintJobActive } from './chamber-preheat.js';
@@ -155,6 +156,11 @@ export class FileDistributionService {
       if (!adapter.capabilities?.fileUpload) throw new Error('File upload is not supported by this printer');
       if (!adapter.capabilities?.localFiles) throw new Error('Printer storage verification is not supported by this printer');
       if (startPrint && !adapter.capabilities?.printLocalFile) throw new Error('Starting uploaded files is not supported by this printer');
+      const uploadExtensions = [...new Set((adapter.uploadExtensions || []).map((value) => String(value || '').trim().toLowerCase()).filter(Boolean))];
+      const extension = path.extname(fileName).toLowerCase();
+      if (uploadExtensions.length && !uploadExtensions.includes(extension)) {
+        throw new Error(`${adapter.manufacturer || adapter.type || 'This printer'} does not support ${extension || 'this file type'} uploads. Supported: ${uploadExtensions.join(', ')}`);
+      }
 
       if (this.uploadFileOverride) {
         await this.uploadFileOverride(printer, filePath, {

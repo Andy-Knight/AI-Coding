@@ -354,6 +354,31 @@ async function apiRoute(req, res, url) {
     return json(res, 200, await adapter.getFiles());
   }
 
+  if (req.method === 'POST' && action === 'files') {
+    if (!adapter.capabilities?.fileUpload) throw new Error('File upload is not supported by this printer');
+    if (!adapter.capabilities?.localFiles) throw new Error('Printer storage verification is not supported by this printer');
+    const staged = await stageUploadRequest(req, req.headers['x-file-name']);
+    try {
+      const result = await fileDistribution.distribute({
+        printerIds:[id],
+        filePath:staged.filePath,
+        fileName:staged.fileName,
+        startPrint:false
+      });
+      const item = result.results?.[0];
+      if (!item?.ok) throw new Error(item?.error || 'Printer file upload failed');
+      return json(res, 201, {
+        ok:true,
+        fileName:staged.fileName,
+        fileSize:staged.size,
+        verified:item.verified === true,
+        verificationSource:item.verificationSource || null
+      });
+    } finally {
+      await staged.cleanup().catch(() => {});
+    }
+  }
+
   if (req.method === 'GET' && action === 'file-material') {
     const fileName = String(url.searchParams.get('fileName') || '').trim();
     if (!fileName) throw new Error('fileName is required');

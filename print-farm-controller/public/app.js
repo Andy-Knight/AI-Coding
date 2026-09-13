@@ -1936,6 +1936,13 @@ async function openPrinter(id) {
   const fileWarningMarkup = fileResult.warning ? `<div class="file-warning">${escapeHtml(fileResult.warning)}</div>` : '';
   const orderLabel = fileResult.ordering === 'last-printed-first' ? 'recent first' : '';
   const fileSourceLabel = files.length ? `${files.length} file${files.length === 1 ? '' : 's'} · ${fileResult.complete ? 'full storage' : 'recent only'}${orderLabel ? ` · ${orderLabel}` : ''}` : '';
+  const uploadExtensions = Array.isArray(printer.uploadExtensions) && printer.uploadExtensions.length
+    ? printer.uploadExtensions.map((value) => String(value || '').trim().toLowerCase()).filter(Boolean)
+    : ['.gcode', '.gx', '.3mf'];
+  const uploadAccept = uploadExtensions.join(',');
+  const fileUploadMarkup = capabilities.fileUpload && capabilities.localFiles
+    ? `<div class="printer-file-upload"><input class="hidden" type="file" data-printer-file-upload-input accept="${escapeHtml(uploadAccept)}"><button type="button" class="secondary" data-printer-file-upload${printer.online ? '' : ' disabled'}>Upload file</button><span class="subtle" data-printer-file-upload-status>${printer.online ? `Supported: ${escapeHtml(uploadExtensions.join(', '))}` : 'Upload unavailable while printer is offline.'}</span></div>`
+    : '';
   const s = printer.status;
   const toolTemperatureMarkup = capabilities.toolTemperatures && Array.isArray(s?.tools) && s.tools.length
     ? s.tools.map((tool) => `<div class="control-row tool-temperature-row"><label>${escapeHtml(tool.name || `T${tool.index}`)} target<input data-tool-temp-input="${tool.index}" type="number" min="0" max="${maxNozzleC}" value="${Number(tool.target || 0)}" /></label><span class="subtle" data-tool-now="${tool.index}">${Number(tool.actual || 0).toFixed(0)} °C now${tool.active ? ' · active' : ''}</span><button class="secondary" data-set-tool-temp="${tool.index}">Set</button></div>`).join('')
@@ -2024,6 +2031,7 @@ async function openPrinter(id) {
         </div>
         <div class="panel">
           <div class="file-heading"><h3>Files on printer</h3><span class="subtle">${escapeHtml(fileSourceLabel)}</span></div>
+          ${fileUploadMarkup}
           ${capabilities.levelBeforePrint ? '<label class="checkbox-label"><input type="checkbox" id="levelBeforePrint" checked /> Level bed before print</label>' : '<div class="field-help">This printer uses the start G-code embedded in the uploaded file; controller-side pre-print levelling is not available.</div>'}
           ${capabilities.flowCalibrationBeforePrint ? '<label class="checkbox-label"><input type="checkbox" id="flowCalibrationBeforePrint" /> Flow calibration before print</label>' : ''}
           ${files.length > 10 ? `<input id="fileSearch" class="file-search" type="search" placeholder="Filter ${files.length} files…" autocomplete="off" />` : ''}
@@ -2101,8 +2109,49 @@ async function openPrinter(id) {
       if (panel) leftDetailColumn.append(panel);
     }
   }
-  printerDialog.showModal();
+  if (!printerDialog.open) printerDialog.showModal();
   updateOpenPrinterTelemetry();
+
+  const printerUploadButton = printerDetail.querySelector('[data-printer-file-upload]');
+  const printerUploadInput = printerDetail.querySelector('[data-printer-file-upload-input]');
+  const printerUploadStatus = printerDetail.querySelector('[data-printer-file-upload-status]');
+  if (printerUploadButton && printerUploadInput) {
+    printerUploadButton.onclick = () => printerUploadInput.click();
+    printerUploadInput.onchange = async () => {
+      const file = printerUploadInput.files?.[0];
+      if (!file) return;
+      const extension = `.${String(file.name || '').split('.').pop().toLowerCase()}`;
+      if (uploadExtensions.length && !uploadExtensions.includes(extension)) {
+        if (printerUploadStatus) printerUploadStatus.textContent = `Unsupported file type. Use ${uploadExtensions.join(', ')}`;
+        printerUploadInput.value = '';
+        return;
+      }
+      if (file.size > 512 * 1024 * 1024) {
+        if (printerUploadStatus) printerUploadStatus.textContent = 'File exceeds the 512 MB upload limit.';
+        printerUploadInput.value = '';
+        return;
+      }
+      printerUploadButton.disabled = true;
+      if (printerUploadStatus) printerUploadStatus.textContent = `Uploading ${file.name}…`;
+      try {
+        const response = await fetch(`/api/printers/${encodeURIComponent(id)}/files`, {
+          method:'POST',
+          headers:{ 'content-type':'application/octet-stream', 'x-file-name':encodeURIComponent(file.name) },
+          body:file
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(result.error || `Upload failed (${response.status})`);
+        await openPrinter(id);
+        const refreshedStatus = printerDetail.querySelector('[data-printer-file-upload-status]');
+        if (refreshedStatus) refreshedStatus.textContent = `Uploaded and verified ${result.fileName || file.name}`;
+      } catch (error) {
+        if (printerUploadStatus) printerUploadStatus.textContent = error.message || 'Upload failed';
+      } finally {
+        printerUploadInput.value = '';
+        if (printerUploadButton.isConnected) printerUploadButton.disabled = false;
+      }
+    };
+  }
 
   const liveCamera = printerDetail.querySelector('img.detail-camera');
   liveCamera?.addEventListener('error', () => {

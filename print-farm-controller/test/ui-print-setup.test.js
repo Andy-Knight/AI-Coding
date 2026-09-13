@@ -227,6 +227,20 @@ test('finished production batches can be reprinted from recent history', () => {
   assert.match(queue, /Production batch must be finished before it can be reprinted/);
 });
 
+
+test('printer detail exposes verified upload to an individual printer', () => {
+  const server = fs.readFileSync(new URL('../src/server.js', import.meta.url), 'utf8');
+  const fleetState = fs.readFileSync(new URL('../src/fleet-state.js', import.meta.url), 'utf8');
+  assert.match(app, /data-printer-file-upload/);
+  assert.match(app, /data-printer-file-upload-input/);
+  assert.match(app, /Uploaded and verified/);
+  assert.match(app, /\/api\/printers\/\$\{encodeURIComponent\(id\)\}\/files/);
+  assert.match(server, /req\.method === 'POST' && action === 'files'/);
+  assert.match(server, /printerIds:\[id\]/);
+  assert.match(fleetState, /uploadExtensions/);
+  assert.match(styles, /\.printer-file-upload/);
+});
+
 test('queue UI exposes production quantity and batch controls', () => {
   const html = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
   const server = fs.readFileSync(new URL('../src/server.js', import.meta.url), 'utf8');

@@ -7,7 +7,7 @@
 - Repository: `Andy-Knight/AI-Coding`
 - Project path: `print-farm-controller/`
 - Branch: `main`
-- Current application version: **0.12.2**
+- Current application version: **0.12.3**
 - Runtime: **Node.js 20+**, ES modules, no npm runtime dependencies.
 - GitHub is the authoritative code baseline.
 
@@ -89,20 +89,23 @@ Manufacturer-specific discovery, capabilities, limits, status normalization, fil
 - v0.12.1 regression suite: **115 passing tests, 0 failures**.
 - **v0.12.2 production batch reprint:** finished production batches in Recent history expose **Reprint batch**, creating a fresh automatic batch with the same quantity, staged controller file and print options while preserving the original history.
 - v0.12.2 regression suite: **117 passing tests, 0 failures**.
+- **v0.12.3 individual printer upload:** supported printer detail windows expose **Upload file**; uploads are adapter-extension-aware, use the existing verified file-distribution path for one target printer, persist available material metadata, and refresh the printer file list after success.
+- v0.12.3 regression suite: **119 passing tests, 0 failures**.
 
 ## Current task
 
-**v0.12.2 batch reprint implementation is complete in code and automated tests.** Next priority is real-hardware validation of production quantities across mixed FlashForge/Snapmaker printers, especially concurrent assignment, bed-clearance recycling, printer-local file reuse, and pause/resume behaviour.
+**v0.12.3 individual-printer file upload is complete in code and automated tests.** Next priority is real-hardware validation of direct uploads and production quantities across mixed FlashForge/Snapmaker printers, especially upload verification, concurrent assignment, bed-clearance recycling, printer-local file reuse, and pause/resume behaviour.
 
 ## Next steps
 
-1. Queue a known-good single-tool file with quantity 4 or more and confirm multiple compatible printers receive copies concurrently.
-2. Confirm each completed printer waits for **Bed cleared** before it receives the next copy from the same production batch.
-3. Pause a production batch while copies are active and confirm active prints continue but no new copies start; then resume it.
-4. Increase and decrease the requested quantity while copies are waiting and confirm already-started/finished copies are never removed.
-5. Cancel remaining copies and confirm currently active prints continue while all waiting/preparing copies are cancelled.
-6. Confirm a printer that already has the exact filename reuses its printer-local copy rather than uploading it again.
-7. After hardware validation, consider queue priority / scheduling policy as the next scheduler milestone.
+1. Open one FlashForge and one Snapmaker printer window, upload a supported file to each, and confirm the verified file appears immediately in that printer's file list.
+2. Queue a known-good single-tool file with quantity 4 or more and confirm multiple compatible printers receive copies concurrently.
+3. Confirm each completed printer waits for **Bed cleared** before it receives the next copy from the same production batch.
+4. Pause a production batch while copies are active and confirm active prints continue but no new copies start; then resume it.
+5. Increase and decrease the requested quantity while copies are waiting and confirm already-started/finished copies are never removed.
+6. Cancel remaining copies and confirm currently active prints continue while all waiting/preparing copies are cancelled.
+7. Confirm a printer that already has the exact filename reuses its printer-local copy rather than uploading it again.
+8. After hardware validation, consider queue priority / scheduling policy as the next scheduler milestone.
 
 ## Handoff rule
 

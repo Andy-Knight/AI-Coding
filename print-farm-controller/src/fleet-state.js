@@ -42,16 +42,19 @@ export class FleetStateService {
       const existing = this.states.get(printer.id);
       let capabilities = existing?.capabilities || {};
       let limits = existing?.limits || {};
+      let uploadExtensions = existing?.uploadExtensions || [];
       try {
         const adapter = this.adapterResolver(printer);
         capabilities = adapter.capabilities;
         limits = adapter.limits;
+        uploadExtensions = [...(adapter.uploadExtensions || [])];
       } catch {}
       this.states.set(printer.id, {
         ...(existing || {}),
         ...publicPrinter(printer),
         capabilities,
         limits,
+        uploadExtensions,
         online: existing?.online ?? false,
         status: existing?.status ?? null,
         cameraAvailable: existing?.cameraAvailable ?? true,
@@ -129,6 +132,7 @@ export class FleetStateService {
       const status = await adapter.getStatus();
       state.capabilities = adapter.capabilities;
       state.limits = adapter.limits;
+      state.uploadExtensions = [...(adapter.uploadExtensions || [])];
       state.online = true;
       state.status = status;
       state.cameraAvailable = Boolean(adapter.capabilities?.camera && (status.cameraAvailable || printer.cameraPort));

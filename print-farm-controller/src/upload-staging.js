@@ -5,7 +5,7 @@ import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 
 export const MAX_UPLOAD_BYTES = 512 * 1024 * 1024;
-const ALLOWED_EXTENSIONS = new Set(['.gcode', '.gx', '.3mf']);
+const ALLOWED_EXTENSIONS = new Set(['.gcode', '.gx', '.3mf', '.gco', '.g']);
 
 export function validateUploadFilename(value) {
   let fileName;
@@ -18,7 +18,7 @@ export function validateUploadFilename(value) {
   if (fileName.length > 240) throw new Error('File name is too long');
   if (/[\\/\0\r\n]/.test(fileName)) throw new Error('File name must not contain a path');
   const extension = path.extname(fileName).toLowerCase();
-  if (!ALLOWED_EXTENSIONS.has(extension)) throw new Error('Choose a .gcode, .gx, or .3mf file');
+  if (!ALLOWED_EXTENSIONS.has(extension)) throw new Error('Choose a .gcode, .gx, .3mf, .gco, or .g file');
   return fileName;
 }
 
