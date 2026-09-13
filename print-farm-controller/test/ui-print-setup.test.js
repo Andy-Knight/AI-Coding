@@ -14,6 +14,14 @@ test('U1 print setup uses material swatches instead of raw loaded-colour option 
 });
 
 
+test('Snapmaker U1 filament colours display both hexadecimal and RGB values', () => {
+  assert.match(app, /function filamentColorText/);
+  assert.match(app, /RGB\(\$\{red\}, \$\{green\}, \$\{blue\}\)/);
+  assert.match(app, /filamentColorText\(filament\.color\)/);
+  assert.match(app, /const details = \[presence, colorText, nozzle\]/);
+});
+
+
 test('U1 print setup exposes native timelapse and filament safety controls', () => {
   assert.match(app, /id=\"printSetupTimeLapse\"/);
   assert.match(app, /id=\"printSetupAutoReplenish\"/);
