@@ -2001,7 +2001,7 @@ async function openPrinter(id) {
           ${capabilities.toolheadNozzleStatus ? `<small data-tool-nozzle="${tool.index}">${escapeHtml(`${nozzleDiameterText(tool.nozzleDiameter)}${tool.nozzleVolumeType ? ` · ${tool.nozzleVolumeType}` : ''}`)}</small>` : ''}
           ${capabilities.toolheadNozzleStatus ? `<small data-tool-offset="${tool.index}">${escapeHtml(toolOffsetText(tool.offset))}</small>` : ''}
           <small data-material-meta="${tool.index}">${escapeHtml(filamentMetaText(filament))}</small>
-          ${printer.adapterType === 'snapmaker-u1' ? `<small class="material-rgb${filamentRgbText(filament.color) ? '' : ' hidden'}" data-material-rgb="${tool.index}">${escapeHtml(filamentRgbText(filament.color) || '')}</small>` : ''}
+          ${['snapmaker-u1','flashforge-ad5m'].includes(printer.adapterType) ? `<small class="material-rgb${filamentRgbText(filament.color) ? '' : ' hidden'}" data-material-rgb="${tool.index}">${escapeHtml(filamentRgbText(filament.color) || '')}</small>` : ''}
         </div>`;
       }).join('')}</div>
       ${printer.adapterType === 'flashforge-ad5m' ? flashForgeMaterialDesignationMarkup(printer, tools[0]?.filament || {}) : ''}
