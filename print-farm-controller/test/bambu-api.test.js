@@ -86,6 +86,8 @@ test('Bambu SSDP parser recognises supported current model codes', () => {
     'DevName.bambu.com: H2C',
     '', ''
   ].join('\r\n'));
+  assert.ok(p1, 'P1S discovery packet should parse');
+  assert.ok(h2c, 'H2C discovery packet should parse');
   assert.equal(p1.model, 'P1S');
   assert.equal(p1.adapterType, 'bambu-lab');
   assert.equal(h2c.model, 'H2C');
@@ -134,7 +136,14 @@ test('Bambu camera factory returns model-appropriate snapshot source objects wit
 test('Bambu automatic queue allows known single-material G-code but holds native multi-material and 3MF jobs for review', () => {
   const adapter = {
     type:'bambu-lab',
-    capabilities:{ fileUpload:true, localFiles:true, printLocalFile:true, printToolMapping:false, nativeMultiMaterialWorkflow:true },
+    capabilities:{
+      fileUpload:true,
+      localFiles:true,
+      printLocalFile:true,
+      printToolMapping:false,
+      nativeMultiMaterialWorkflow:true,
+      projectFileMappingReview:true
+    },
     limits:{ toolCount:1 },
     uploadExtensions:['.gcode','.3mf']
   };
@@ -146,19 +155,19 @@ test('Bambu automatic queue allows known single-material G-code but holds native
     printer:{ id:'bambu' }, state, adapter,
     job:{ fileName:'single.gcode', requirements:{ toolCount:1, requiredTools:[0], logicalTools:[{ index:0, material:'PLA', color:'#FF0000', nozzleDiameter:0.4 }] } }
   });
-  assert.equal(single.category, 'ready');
+  assert.equal(single.category, 'ready', JSON.stringify(single));
 
   const multi = evaluateQueueCompatibility({
     printer:{ id:'bambu' }, state, adapter,
     job:{ fileName:'multi.gcode', requirements:{ toolCount:2, requiredTools:[0,1], logicalTools:[{ index:0, material:'PLA' },{ index:1, material:'PLA' }] } }
   });
-  assert.equal(multi.category, 'needs_review');
-  assert.ok(multi.reasons.some((reason) => reason.code === 'native_material_mapping_review'));
+  assert.equal(multi.category, 'needs_review', JSON.stringify(multi));
+  assert.ok(multi.reasons.some((reason) => reason.code === 'native_material_mapping_review'), JSON.stringify(multi));
 
   const project = evaluateQueueCompatibility({
     printer:{ id:'bambu' }, state, adapter,
     job:{ fileName:'plate.gcode.3mf', requirements:{} }
   });
-  assert.equal(project.category, 'needs_review');
-  assert.ok(project.reasons.some((reason) => reason.code === 'bambu_project_mapping_review'));
+  assert.equal(project.category, 'needs_review', JSON.stringify(project));
+  assert.ok(project.reasons.some((reason) => reason.code === 'bambu_project_mapping_review'), JSON.stringify(project));
 });
