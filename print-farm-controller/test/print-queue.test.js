@@ -1,6 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { PrintQueueService } from '../src/print-queue.js';
+import { PrintQueueService, printQueueHelpers } from '../src/print-queue.js';
+
+
+test('completed Snapmaker status can start a new job when Moonraker retains the previous filename', () => {
+  const staleCompletedStatus = { status:'idle', fileName:'previous-print.gcode', progress:100 };
+  assert.equal(printQueueHelpers.printerCanStart(staleCompletedStatus), true);
+  assert.equal(printQueueHelpers.printerCanStart({ ...staleCompletedStatus, status:'complete' }), true);
+  assert.equal(printQueueHelpers.printerCanStart({ ...staleCompletedStatus, status:'printing' }), false);
+});
 
 class FakeFleetState {
   constructor(states = []) {
