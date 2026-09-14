@@ -20,7 +20,7 @@ function authPacket(printer) {
   return packet;
 }
 
-class P1SnapshotSource {
+export class P1SnapshotSource {
   constructor(printer) {
     this.printer = printer;
     this.socket = null;
@@ -30,6 +30,7 @@ class P1SnapshotSource {
     this.waiters = new Set();
     this.intervalMs = 2000;
     this.sourceLabel = `${printer.host}:6000 Bambu chamber camera`;
+    this.kind = 'snapshot';
   }
 
   async start() {
@@ -118,16 +119,18 @@ function ffmpegAvailable(binary = 'ffmpeg') {
   });
 }
 
-class RtspsSnapshotSource {
+export class RtspsSnapshotSource {
   constructor(printer) {
     this.printer = printer;
     this.intervalMs = 2500;
     this.sourceLabel = `${printer.host}:322 Bambu RTSPS camera`;
     this.ffmpeg = String(process.env.FFMPEG_PATH || 'ffmpeg');
     this.available = null;
+    this.kind = 'snapshot';
   }
 
   async start() {
+    if (!accessCode(this.printer)) throw new Error('Bambu LAN access code is required for camera access');
     if (this.available === null) this.available = await ffmpegAvailable(this.ffmpeg);
     if (!this.available) throw new Error('Bambu RTSPS camera requires ffmpeg in PATH (or FFMPEG_PATH)');
   }
@@ -146,21 +149,27 @@ class RtspsSnapshotSource {
       const chunks = [];
       const errors = [];
       let total = 0;
+      let settled = false;
+      const finish = (fn, value) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        fn(value);
+      };
       const timer = setTimeout(() => {
         child.kill('SIGKILL');
-        reject(new Error('Timed out reading Bambu RTSPS camera'));
+        finish(reject, new Error('Timed out reading Bambu RTSPS camera'));
       }, 10000);
       child.stdout.on('data', (chunk) => {
         total += chunk.length;
         if (total <= 20 * 1024 * 1024) chunks.push(Buffer.from(chunk));
       });
       child.stderr.on('data', (chunk) => errors.push(Buffer.from(chunk)));
-      child.once('error', (error) => { clearTimeout(timer); reject(error); });
+      child.once('error', (error) => finish(reject, error));
       child.once('close', (codeValue) => {
-        clearTimeout(timer);
         const frame = Buffer.concat(chunks);
-        if (codeValue === 0 && frame.length > 4 && frame[0] === 0xFF && frame[1] === 0xD8) resolve(frame);
-        else reject(new Error(`Bambu RTSPS snapshot failed${errors.length ? `: ${Buffer.concat(errors).toString('utf8').trim().slice(0, 240)}` : ''}`));
+        if (codeValue === 0 && frame.length > 4 && frame[0] === 0xFF && frame[1] === 0xD8) finish(resolve, frame);
+        else finish(reject, new Error(`Bambu RTSPS snapshot failed${errors.length ? `: ${Buffer.concat(errors).toString('utf8').trim().slice(0, 240)}` : ''}`));
       });
     });
   }
@@ -171,6 +180,5 @@ class RtspsSnapshotSource {
 
 export function createBambuCameraSource(printer) {
   const model = String(printer?.model || '').trim().toUpperCase();
-  if (model === 'P1S') return { kind:'snapshot', ...new P1SnapshotSource(printer) };
-  return { kind:'snapshot', ...new RtspsSnapshotSource(printer) };
+  return model === 'P1S' ? new P1SnapshotSource(printer) : new RtspsSnapshotSource(printer);
 }
