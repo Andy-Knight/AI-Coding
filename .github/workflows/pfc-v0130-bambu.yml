@@ -1,0 +1,37 @@
+name: Validate Printer Fleet Controller v0.13.0
+
+on:
+  push:
+    branches: [feature/bambu-lab-support-v0130]
+    paths:
+      - '.github/pfc-v0130-bambu-finalize.py'
+      - '.github/workflows/pfc-v0130-bambu.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  test-and-finalize:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out feature branch
+        uses: actions/checkout@v4
+        with:
+          ref: feature/bambu-lab-support-v0130
+          fetch-depth: 0
+      - name: Apply v0.13.0 integration patch
+        run: python .github/pfc-v0130-bambu-finalize.py
+      - name: Run full test suite
+        working-directory: print-farm-controller
+        run: |
+          npm test | tee /tmp/pfc-tests.txt
+          grep -q '# pass 132' /tmp/pfc-tests.txt
+          grep -q '# fail 0' /tmp/pfc-tests.txt
+      - name: Commit tested v0.13.0 update
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm .github/workflows/pfc-v0130-bambu.yml .github/pfc-v0130-bambu-finalize.py
+          git add print-farm-controller
+          git commit -m 'Add Bambu Lab P1S P2S H2S H2D H2C support'
+          git push origin HEAD:feature/bambu-lab-support-v0130
