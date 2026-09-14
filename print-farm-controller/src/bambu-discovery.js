@@ -16,19 +16,34 @@ const SERIAL_PREFIXES = [
   ['31B8','H2C']
 ];
 
+function cleanDiscoveredHost(value) {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  if (/^https?:\/\//i.test(text)) {
+    try { return new URL(text).hostname; } catch {}
+  }
+  return text.replace(/^\/+/, '').replace(/[\/:].*$/, '').trim();
+}
+
 export function parseBambuSsdpPacket(value) {
   const text = Buffer.isBuffer(value) ? value.toString('utf8') : String(value || '');
-  if (!/urn:bambulab-com:device:3dprinter:1/i.test(text)) return null;
   const headers = {};
-  for (const line of text.split(/\r?\n/).slice(1)) {
+  for (const line of text.split(/\r?\n/)) {
     const index = line.indexOf(':');
     if (index <= 0) continue;
     headers[line.slice(0, index).trim().toLowerCase()] = line.slice(index + 1).trim();
   }
-  const host = String(headers.location || '').replace(/^https?:\/\//i, '').replace(/\/.*$/, '').trim();
-  const serialNumber = String(headers.usn || '').trim();
+
+  // Firmware revisions have varied the NOTIFY first line and NT/USN formatting.
+  // Bambu's namespaced discovery headers are sufficient identification even when
+  // an exact urn token is not present.
   const modelCode = String(headers['devmodel.bambu.com'] || '').trim().toUpperCase();
   const name = String(headers['devname.bambu.com'] || '').trim();
+  const isBambu = /urn:bambulab-com:device:3dprinter:1/i.test(text) || Boolean(modelCode || name);
+  if (!isBambu) return null;
+
+  const host = cleanDiscoveredHost(headers.location);
+  const serialNumber = String(headers.usn || headers['devsn.bambu.com'] || '').trim();
   let model = MODEL_CODES.get(modelCode) || null;
   if (!model) {
     const upperName = name.toUpperCase();
@@ -36,7 +51,7 @@ export function parseBambuSsdpPacket(value) {
   }
   if (!model) {
     const upperSerial = serialNumber.toUpperCase();
-    const prefix = SERIAL_PREFIXES.find(([value]) => upperSerial.startsWith(value));
+    const prefix = SERIAL_PREFIXES.find(([prefixValue]) => upperSerial.startsWith(prefixValue));
     model = prefix?.[1] || null;
   }
   // Legacy H2 serials share the 094 prefix, so use the advertised model code/name
