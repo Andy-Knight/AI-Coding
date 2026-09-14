@@ -1,4 +1,6 @@
-# Printer Fleet Controller v0.12.8
+# Printer Fleet Controller v0.12.9
+
+> v0.12.9 fixes Snapmaker U1 queue availability after a completed print. Moonraker may retain the previous filename after reporting an idle/complete state; the queue now treats the explicit idle state as authoritative while continuing to enforce the separate bed-clearance interlock.
 
 > v0.12.8 adds **native Snapmaker U1 filament colour editing** for manually assigned third-party filament. Toolhead status can write a selected colour to the idle U1 using its stock `SET_PRINT_FILAMENT_CONFIG` command, verifies the printer read-back, and keeps official RFID filament colours locked.
 
