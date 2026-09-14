@@ -33,6 +33,16 @@ if readme_end < 0:
     raise SystemExit('README release-note patch end not found')
 text = text[:readme_start] + text[readme_end + 1:]
 
+# Preserve the existing fixed physical tool-count interlock for every adapter that
+# does not explicitly advertise a native material-changing workflow. Bambu AMS is
+# the exception: several slicer materials can use one physical nozzle, but those jobs
+# are still held for review until an explicit slot map exists.
+needle = "'''  // A native material-changing workflow (for example Bambu AMS) can service\\n"
+replacement = "'''  if (!capabilities.nativeMultiMaterialWorkflow && Number.isFinite(Number(limits.toolCount)) && requiredToolCount > Number(limits.toolCount)) {\\n    incompatible.push({ code:'insufficient_tool_count', text:`File requires ${requiredToolCount} tools; printer has ${Number(limits.toolCount)}` });\\n  }\\n\\n  // A native material-changing workflow (for example Bambu AMS) can service\\n"
+if text.count(needle) != 1:
+    raise SystemExit(f'expected one native-workflow replacement anchor, got {text.count(needle)}')
+text = text.replace(needle, replacement, 1)
+
 # Correct the context wording now that .3mf is storage-only until an explicit
 # AMS/plate mapping flow authorises project start.
 text = text.replace(
@@ -93,4 +103,4 @@ test('Bambu 3MF direct start is blocked until reviewed AMS and plate mapping exi
 """
 test_file.write_text(test_text, encoding='utf-8')
 
-print('Corrected v0.12.8 integration anchors and hardened Bambu 3MF start safety')
+print('Corrected v0.12.8 integration anchors, preserved tool-count safety, and hardened Bambu 3MF start safety')
