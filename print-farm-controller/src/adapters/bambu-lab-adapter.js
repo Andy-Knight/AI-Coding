@@ -79,7 +79,7 @@ function capabilitiesFor(profile) {
     materialDesignation:false,
     nozzleDesignation:false,
     printToolMapping:false,
-    multiMaterialSingleTool:true,
+    nativeMultiMaterialWorkflow:true,
     flowCalibrationBeforePrint:true,
     timeLapseBeforePrint:true,
     autoFilamentReplenishment:false,
@@ -133,7 +133,7 @@ export const bambuLabAdapterDefinition = Object.freeze({
     status:true, localFiles:true, fileUpload:true, printLocalFile:true, jobControl:true,
     nozzleTemperature:true, bedTemperature:true, coolingFan:true, chamberFan:true,
     levelBeforePrint:true, camera:true, chamberTemperatureSensor:true, materialStatus:true,
-    multiMaterialSingleTool:true, flowCalibrationBeforePrint:true, timeLapseBeforePrint:true,
+    nativeMultiMaterialWorkflow:true, flowCalibrationBeforePrint:true, timeLapseBeforePrint:true,
     toolheadNozzleStatus:true
   }),
   configFields:[
