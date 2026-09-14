@@ -5,6 +5,7 @@ on:
     branches: [feature/bambu-lab-support-v0130]
     paths:
       - '.github/pfc-v0130-bambu-finalize.py'
+      - '.github/pfc-v0130-fix-helper.py'
       - '.github/workflows/pfc-v0130-bambu.yml'
 
 permissions:
@@ -20,7 +21,9 @@ jobs:
           ref: feature/bambu-lab-support-v0130
           fetch-depth: 0
       - name: Apply v0.13.0 integration patch
-        run: python .github/pfc-v0130-bambu-finalize.py
+        run: |
+          python .github/pfc-v0130-fix-helper.py
+          python .github/pfc-v0130-bambu-finalize.py
       - name: Run full test suite
         working-directory: print-farm-controller
         run: |
@@ -31,7 +34,7 @@ jobs:
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git rm .github/workflows/pfc-v0130-bambu.yml .github/pfc-v0130-bambu-finalize.py
+          git rm .github/workflows/pfc-v0130-bambu.yml .github/pfc-v0130-bambu-finalize.py .github/pfc-v0130-fix-helper.py
           git add print-farm-controller
           git commit -m 'Add Bambu Lab P1S P2S H2S H2D H2C support'
           git push origin HEAD:feature/bambu-lab-support-v0130
