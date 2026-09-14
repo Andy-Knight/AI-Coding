@@ -10,6 +10,7 @@ import { assessMaterialCompatibility } from './file-material-metadata.js';
 
 const TERMINAL_STATES = new Set(['completed', 'failed', 'cancelled']);
 const ACTIVE_PRINTER_STATES = new Set(['printing', 'working', 'building_from_sd', 'pause', 'paused']);
+const IDLE_PRINTER_STATES = new Set(['idle', 'ready', 'standby', 'complete', 'completed']);
 const ACTIVE_QUEUE_STATES = new Set(['uploading', 'preflight', 'starting', 'printing']);
 const ERROR_PRINTER_STATES = new Set(['error', 'failed']);
 const START_TIMEOUT_MS = 60_000;
@@ -37,8 +38,11 @@ function printIsActive(status = {}) {
 
 function printerCanStart(status = {}) {
   const state = normalizeState(status.status);
+  // Moonraker may retain the previous filename after print_stats reaches
+  // complete. An explicit terminal/idle state is authoritative.
+  if (IDLE_PRINTER_STATES.has(state)) return true;
   if (status.fileName || printIsActive(status)) return false;
-  return ['', 'idle', 'ready', 'standby', 'complete', 'completed'].includes(state);
+  return state === '';
 }
 
 function matchesFile(status = {}, fileName) {
