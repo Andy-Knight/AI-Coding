@@ -50,7 +50,7 @@ replace_once('public/app.js',
 
 # The two adapter-specific colour rendering tests must follow the expanded
 # renderer allowlist as Bambu now uses the same hexadecimal/RGB status line.
-ui_test_path = root / 'test/ui-print-setup.test.js'
+ui_test_path = ROOT / 'test/ui-print-setup.test.js'
 ui_test_text = ui_test_path.read_text(encoding='utf-8')
 old_colour_allowlist = r"/\['snapmaker-u1','flashforge-ad5m'\]\.includes\(printer\.adapterType\)/"
 new_colour_allowlist = r"/\['snapmaker-u1','flashforge-ad5m','bambu-lab'\]\.includes\(printer\.adapterType\)/"
