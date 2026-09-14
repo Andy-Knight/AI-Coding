@@ -7,7 +7,7 @@
 - Repository: `Andy-Knight/AI-Coding`
 - Project path: `print-farm-controller/`
 - Branch: `main`
-- Current application version: **0.12.8**
+- Current application version: **0.13.0**
 - Runtime: **Node.js 20+**, ES modules, no npm runtime dependencies.
 - GitHub is the authoritative code baseline.
 
@@ -33,6 +33,7 @@ Local Fleet Controller (`src/`)
 PrinterAdapter boundary (`src/adapters/`)
         +-- FlashForge Adventurer 5M / 5M Pro
         +-- Snapmaker U1 -> Moonraker / Klipper
+        +-- Bambu Lab P1S/P2S/H2S/H2D/H2C -> LAN MQTT/FTPS
 ```
 
 Manufacturer-specific discovery, capabilities, limits, status normalization, files, print control, temperatures and camera selection belong behind the adapter boundary. Core fleet services should remain manufacturer-agnostic.
@@ -58,6 +59,7 @@ Manufacturer-specific discovery, capabilities, limits, status normalization, fil
 
 - FlashForge Adventurer 5M / 5M Pro support.
 - Snapmaker U1 support via Moonraker/Klipper, including stock camera integration.
+- Bambu Lab P1S, P2S, H2S, H2D and H2C support via local LAN/Developer Mode MQTT + FTPS, with model-specific limits and camera transports.
 - Automatic/local discovery, persistent printer registry and controller-side printer renaming.
 - Dashboard ordering, SSE fleet state, diagnostics and batch actions.
 - Verified file distribution and printer-local file operations.
@@ -98,22 +100,23 @@ Manufacturer-specific discovery, capabilities, limits, status normalization, fil
 - **v0.12.7 FlashForge RGB colour display:** controller-assigned FlashForge filament colours now show the stored `#RRGGBB` value plus `RGB(r, g, b)` in Toolhead status; queue compatibility semantics are unchanged.
 - **v0.12.8 native Snapmaker filament colour editing:** manually assigned third-party U1 filament colours can be changed from each toolhead card using stock `SET_PRINT_FILAMENT_CONFIG`; writes are idle/loaded/editable-only and verified against `print_task_config.filament_color_rgba`. Official RFID filament remains colour-locked.
 - v0.12.8 regression suite: **125 passing tests, 0 failures**.
+- **v0.13.0 Bambu Lab adapter family:** local MQTT-over-TLS status/control, FTPS printer storage listing/upload/verification, local G-code start path plus 3MF storage support, job/temperature/fan controls, AMS-active material metadata, SSDP discovery, P1S native JPEG camera and P2S/H2 RTSPS camera via optional `ffmpeg`. Automatic single-material G-code scheduling is enabled when compatibility is known; native multi-material/AMS and Bambu project-file mapping are held for review until an explicit mapping workflow exists.
+- v0.13.0 regression suite: **133 passing tests, 0 failures**.
 
 ## Current task
 
-**v0.12.8 native Snapmaker filament colour editing is complete in code and automated tests.** Next priority is real-hardware validation that changing a manually assigned U1 filament colour updates the printer touchscreen and is immediately reflected in controller status/queue compatibility.
+**v0.13.0 Bambu Lab support is complete in code and automated tests.** Next priority is real-hardware validation on at least one Bambu printer, starting with LAN/Developer Mode authentication, MQTT status/control, FTPS file workflow and the model-specific camera path.
 
 ## Next steps
 
-1. On an idle Snapmaker U1 with manually assigned third-party filament loaded, change a toolhead colour in Printer Fleet Controller and confirm the U1 touchscreen updates to the same colour; confirm official RFID spools remain locked.
-2. Open one FlashForge and one Snapmaker printer window, upload a supported file to each, and confirm the verified file appears immediately in that printer's file list.
-3. Queue a known-good single-tool file with quantity 4 or more and confirm multiple compatible printers receive copies concurrently.
-4. Confirm each completed printer waits for **Bed cleared** before it receives the next copy from the same production batch.
-5. Pause a production batch while copies are active and confirm active prints continue but no new copies start; then resume it.
-6. Increase and decrease the requested quantity while copies are waiting and confirm already-started/finished copies are never removed.
-7. Cancel remaining copies and confirm currently active prints continue while all waiting/preparing copies are cancelled.
-8. Confirm a printer that already has the exact filename reuses its printer-local copy rather than uploading it again.
-9. After hardware validation, consider queue priority / scheduling policy as the next scheduler milestone.
+1. Enable LAN/Developer Mode on a Bambu printer, add/discover it, and confirm live status plus pause/resume/cancel and temperature/fan control.
+2. Upload a small `.gcode` from the printer window; confirm FTPS verification and local file-list refresh, then direct-print it.
+3. Queue a known single-material Bambu G-code automatically and confirm material/nozzle compatibility plus the existing bed-clearance interlock.
+4. On P1S, validate the native port-6000 JPEG camera; on P2S/H2, validate RTSPS with `ffmpeg` installed on the controller host.
+5. Validate an H2D/H2C dual-head status feed, especially per-head actual/target temperature, nozzle diameter and logical T0/T1 identity.
+6. Confirm multi-material/AMS and Bambu 3MF automatic jobs stop at **Needs review** rather than starting unattended.
+7. Next Bambu milestone: add explicit AMS slot/plate mapping so reviewed multi-material projects can be scheduled safely.
+8. Continue production-batch hardware validation across mixed manufacturers, then consider queue priority / scheduling policy.
 
 ## Handoff rule
 

@@ -49,6 +49,107 @@ function toolMatches(required, physical) {
   return true;
 }
 
+function materialSlotMatches(required, slot) {
+  if (slot?.present === false) return false;
+  const requiredMaterial = canonicalMaterial(required?.material);
+  const currentMaterial = canonicalMaterial(slot?.material || slot?.type);
+  if (requiredMaterial && currentMaterial && requiredMaterial !== currentMaterial) return false;
+  const requiredColor = normalizeColor(required?.color);
+  const currentColor = normalizeColor(slot?.color);
+  if (requiredColor && currentColor && requiredColor !== currentColor) return false;
+  return true;
+}
+
+function nativeMaterialSlots(status = {}) {
+  if (Array.isArray(status.materialInventory)) return status.materialInventory;
+  if (Array.isArray(status.materials?.slots)) return status.materials.slots;
+  return [];
+}
+
+function mapNativeMaterialSlots(requirements = {}, status = {}) {
+  const logicalTools = Array.isArray(requirements.logicalTools) ? requirements.logicalTools : [];
+  const slots = nativeMaterialSlots(status)
+    .filter((slot) => slot?.present !== false)
+    .filter((slot) => Number.isInteger(Number(slot?.index)));
+  if (!logicalTools.length) return { materialSlotMap:null, reasons:[], review:[] };
+  if (!slots.length) {
+    return {
+      materialSlotMap:null,
+      reasons:[],
+      review:[{ code:'material_inventory_unknown', text:'Printer material-slot inventory is not available for this multi-material job' }]
+    };
+  }
+
+  const descriptors = logicalTools.map((logical) => ({
+    logical,
+    candidates:slots.filter((slot) => materialSlotMatches(logical, slot))
+  }));
+  const missing = descriptors.filter((item) => !item.candidates.length);
+  if (missing.length) {
+    return {
+      materialSlotMap:null,
+      review:[],
+      reasons:missing.map(({ logical }) => ({
+        code:'material_slot_not_loaded',
+        text:`No loaded material slot matches file T${logical.index} (${requirementText(logical)})`
+      }))
+    };
+  }
+
+  const ordered = [...descriptors].sort((a, b) => a.candidates.length - b.candidates.length || Number(a.logical.index) - Number(b.logical.index));
+  const assigned = new Map();
+  const usedSlots = new Set();
+  function choose(position) {
+    if (position >= ordered.length) return true;
+    const descriptor = ordered[position];
+    for (const slot of descriptor.candidates) {
+      const slotIndex = Number(slot.index);
+      if (usedSlots.has(slotIndex)) continue;
+      usedSlots.add(slotIndex);
+      assigned.set(Number(descriptor.logical.index), slot);
+      if (choose(position + 1)) return true;
+      assigned.delete(Number(descriptor.logical.index));
+      usedSlots.delete(slotIndex);
+    }
+    return false;
+  }
+
+  if (!choose(0)) {
+    return {
+      materialSlotMap:null,
+      review:[],
+      reasons:[{ code:'material_slot_mapping_conflict', text:'No unique loaded material-slot mapping satisfies all file material requirements' }]
+    };
+  }
+
+  const materialSlotMap = {};
+  for (const logical of logicalTools) {
+    materialSlotMap[String(logical.index)] = Number(assigned.get(Number(logical.index)).index);
+  }
+  return { materialSlotMap, reasons:[], review:[] };
+}
+
+function validateNativeMaterialNozzles(requirements = {}, status = {}) {
+  const logicalTools = Array.isArray(requirements.logicalTools) ? requirements.logicalTools : [];
+  const requiredNozzles = [...new Set(logicalTools
+    .map((tool) => Number(tool?.nozzleDiameter))
+    .filter((diameter) => Number.isFinite(diameter) && diameter > 0))];
+  if (!requiredNozzles.length) return { reasons:[], review:[] };
+  const physicalTools = (Array.isArray(status.tools) ? status.tools : [])
+    .filter((tool) => Number.isFinite(Number(tool?.nozzleDiameter)));
+  if (!physicalTools.length) {
+    return { reasons:[], review:[{ code:'nozzle_unknown', text:'Installed physical nozzle size is not reported for this multi-material job' }] };
+  }
+  const missing = requiredNozzles.filter((diameter) => !physicalTools.some((tool) => sameNozzle(diameter, tool.nozzleDiameter)));
+  return {
+    reasons:missing.map((diameter) => ({
+      code:'nozzle_mismatch',
+      text:`No physical print tool has the required ${diameter.toFixed(1)} mm nozzle`
+    })),
+    review:[]
+  };
+}
+
 function mapLogicalTools(requirements = {}, status = {}) {
   const logicalTools = Array.isArray(requirements.logicalTools) ? requirements.logicalTools : [];
   const physicalTools = Array.isArray(status.tools) ? status.tools : [];
@@ -136,14 +237,36 @@ export function evaluateQueueCompatibility({ job, printer, state, adapter, bedCl
 
   const requiredTools = Array.isArray(requirements.requiredTools) ? requirements.requiredTools : [];
   const requiredToolCount = Number(requirements.toolCount || requiredTools.length || 0);
-  if (requiredToolCount > 1 && !capabilities.printToolMapping) {
+  if (requiredToolCount > 1 && !capabilities.printToolMapping && !capabilities.nativeMultiMaterialWorkflow) {
     incompatible.push({ code:'insufficient_tool_support', text:`File requires ${requiredToolCount} tools` });
   }
-  if (Number.isFinite(Number(limits.toolCount)) && requiredToolCount > Number(limits.toolCount)) {
+  if (!capabilities.nativeMultiMaterialWorkflow && Number.isFinite(Number(limits.toolCount)) && requiredToolCount > Number(limits.toolCount)) {
     incompatible.push({ code:'insufficient_tool_count', text:`File requires ${requiredToolCount} tools; printer has ${Number(limits.toolCount)}` });
   }
 
+  // A native material-changing workflow (for example Bambu AMS) can service
+  // multiple slicer tools through the printer's own material system even when it
+  // does not expose U1-style physical-head remapping to the controller. Until the
+  // controller has an explicit native slot map, hold those jobs for review rather
+  // than either rejecting them or starting them unattended.
+  if (requiredToolCount > 1 && capabilities.nativeMultiMaterialWorkflow && !capabilities.printToolMapping) {
+    review.push({ code:'native_material_mapping_review', text:'Multi-material job requires printer-native material/slot mapping review before unattended start' });
+  }
+  if (extension === '.3mf' && capabilities.projectFileMappingReview) {
+    review.push({ code:'bambu_project_mapping_review', text:'Project file requires material/plate mapping review before unattended start' });
+  }
+
   let toolMap = null;
+  let materialSlotMap = null;
+  if (!incompatible.length && requiredToolCount > 1 && capabilities.nativeMultiMaterialWorkflow && !capabilities.printToolMapping) {
+    const mappedMaterials = mapNativeMaterialSlots(requirements, state?.status || {});
+    materialSlotMap = mappedMaterials.materialSlotMap;
+    blocked.push(...mappedMaterials.reasons);
+    review.push(...mappedMaterials.review);
+    const nozzleCheck = validateNativeMaterialNozzles(requirements, state?.status || {});
+    blocked.push(...nozzleCheck.reasons);
+    review.push(...nozzleCheck.review);
+  }
   if (!incompatible.length && capabilities.printToolMapping && requiredToolCount) {
     if (requirements.usageReliable === false && requiredToolCount > 1) {
       review.push({ code:'unreliable_tool_usage', text:'File tool usage could not be determined reliably for unattended multi-tool scheduling' });
@@ -155,7 +278,13 @@ export function evaluateQueueCompatibility({ job, printer, state, adapter, bedCl
     }
   } else if (!incompatible.length && requiredToolCount === 1) {
     const required = Array.isArray(requirements.logicalTools) ? requirements.logicalTools[0] : null;
-    const physical = Array.isArray(state?.status?.tools) ? state.status.tools[0] : null;
+    const physicalTools = Array.isArray(state?.status?.tools) ? state.status.tools : [];
+    // Printers with multiple fixed physical heads but no remapping API use the
+    // slicer's logical tool index directly. Single-head printers still use T0.
+    const requiredIndex = Number(required?.index);
+    const physical = Number.isInteger(requiredIndex)
+      ? (physicalTools.find((tool) => Number(tool.index) === requiredIndex) || physicalTools[0])
+      : physicalTools[0];
     if (required && physical) {
       if (physical.filament?.present === false) blocked.push({ code:'filament_absent', text:'Filament is not loaded' });
       const requiredMaterial = canonicalMaterial(required.material);
@@ -191,6 +320,7 @@ export function evaluateQueueCompatibility({ job, printer, state, adapter, bedCl
     ready: category === 'ready',
     compatible: !incompatible.length,
     toolMap,
+    materialSlotMap,
     reasons: [...incompatible, ...review, ...blocked]
   };
 }

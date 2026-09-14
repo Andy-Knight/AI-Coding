@@ -141,6 +141,48 @@ function findActiveTray(print = {}) {
   return ams.vt_tray || print.vt_tray || null;
 }
 
+function normalizeMaterialSlot(tray, index, source, slotType) {
+  if (!tray || typeof tray !== 'object') return null;
+  const material = String(tray.tray_type || tray.type || '').trim() || null;
+  const color = normalizeHex(tray.tray_color || tray.color);
+  const variant = String(tray.tray_sub_brands || tray.sub_brands || '').trim() || null;
+  const vendor = String(tray.tray_info_idx || '').trim() || null;
+  const present = Boolean(material || color || variant || vendor);
+  return {
+    index:Number(index),
+    present,
+    metadataAvailable:present,
+    materialSource:'printer',
+    material,
+    materialVariant:variant,
+    color,
+    vendor,
+    source,
+    slotType
+  };
+}
+
+function normalizeMaterialInventory(print = {}) {
+  const ams = print.ams || {};
+  const slots = [];
+  const units = Array.isArray(ams.ams) ? ams.ams : [];
+  units.forEach((unit, unitPosition) => {
+    const unitId = Number.isInteger(Number(unit?.id)) ? Number(unit.id) : unitPosition;
+    const trays = Array.isArray(unit?.tray) ? unit.tray : [];
+    trays.forEach((tray, trayPosition) => {
+      const trayId = Number.isInteger(Number(tray?.id)) ? Number(tray.id) : trayPosition;
+      const slot = normalizeMaterialSlot(tray, unitId * 4 + trayId, `AMS ${unitId + 1} slot ${trayId + 1}`, 'ams');
+      if (slot) slots.push(slot);
+    });
+  });
+  const external = ams.vt_tray || print.vt_tray || null;
+  if (external) {
+    const slot = normalizeMaterialSlot(external, 254, 'External spool', 'external');
+    if (slot) slots.push(slot);
+  }
+  return slots;
+}
+
 function normalizeFilament(print = {}) {
   const tray = findActiveTray(print);
   if (!tray) return { present:null, metadataAvailable:false, materialSource:null, material:null, materialVariant:null, color:null };
@@ -200,6 +242,7 @@ function normalizeExtruderTools(print = {}, modelProfile = {}) {
 export function normalizeBambuStatus(raw = {}, modelProfile = {}) {
   const print = raw.print || raw || {};
   const tools = normalizeExtruderTools(print, modelProfile);
+  const materialInventory = normalizeMaterialInventory(print);
   const activeTool = tools.find((tool) => tool.active) || tools[0];
   const ctc = unpackPackedTemperature(print.device?.ctc?.info?.temp);
   const chamberActual = ctc.actual ?? (Number.isFinite(Number(print.chamber_temper)) ? Number(print.chamber_temper) : null);
@@ -220,12 +263,15 @@ export function normalizeBambuStatus(raw = {}, modelProfile = {}) {
     activeTool:Number(activeTool?.index || 0),
     nozzle:{ actual:numeric(activeTool?.actual, 0), target:numeric(activeTool?.target, 0) },
     tools,
+    materialInventory,
     materials:{
-      available:tools.some((tool) => tool.filament?.metadataAvailable || tool.filament?.present !== null),
-      loadedCount:tools.filter((tool) => tool.filament?.present === true).length,
+      available:materialInventory.length > 0 || tools.some((tool) => tool.filament?.metadataAvailable || tool.filament?.present !== null),
+      loadedCount:materialInventory.length ? materialInventory.filter((slot) => slot.present === true).length : tools.filter((tool) => tool.filament?.present === true).length,
       toolCount:tools.length,
-      metadataCount:tools.filter((tool) => tool.filament?.metadataAvailable).length,
-      tools:tools.map((tool) => tool.filament)
+      slotCount:materialInventory.length,
+      metadataCount:materialInventory.length ? materialInventory.filter((slot) => slot.metadataAvailable).length : tools.filter((tool) => tool.filament?.metadataAvailable).length,
+      tools:tools.map((tool) => tool.filament),
+      slots:materialInventory
     },
     bed:{ actual:numeric(print.bed_temper, 0), target:numeric(print.bed_target_temper, 0) },
     chamber:{ actual:chamberActual, target:ctc.target },
@@ -504,6 +550,9 @@ export async function startBambuFile(printer, fileName, options = {}, modelProfi
   const name = path.posix.basename(String(fileName || '').replace(/\\/g, '/'));
   if (!name) throw new BambuApiError('File name is required');
   if (/\.3mf$/i.test(name)) {
+    if (options.allowProjectStart !== true) {
+      throw new BambuApiError('Bambu 3MF project start requires reviewed AMS/plate mapping; upload/storage is supported but direct start is disabled');
+    }
     const payload = {
       command:'project_file',
       param:'Metadata/plate_1.gcode',

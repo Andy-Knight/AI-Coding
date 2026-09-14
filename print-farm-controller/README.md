@@ -1,4 +1,6 @@
-# Printer Fleet Controller v0.12.8
+# Printer Fleet Controller v0.13.0
+
+> v0.13.0 adds **Bambu Lab P1S, P2S, H2S, H2D and H2C** support through local LAN/Developer Mode. The Bambu adapter uses MQTT-over-TLS for live status/control and implicit FTPS for printer-local file listing, upload and verification; model-specific temperature/tool limits are enforced. P1S uses its native JPEG camera transport, while P2S/H2 cameras use RTSPS when `ffmpeg` is available. Single-material G-code can participate in the automatic compatible-printer queue. Bambu `.3mf` files can be stored on the printer, but project start and native multi-material/AMS workflows are deliberately held until explicit AMS/plate mapping is added.
 
 > v0.12.8 adds **native Snapmaker U1 filament colour editing** for manually assigned third-party filament. Toolhead status can write a selected colour to the idle U1 using its stock `SET_PRINT_FILAMENT_CONFIG` command, verifies the printer read-back, and keeps official RFID filament colours locked.
 
@@ -30,6 +32,7 @@ A local-first 3D printer fleet controller. It runs entirely on your LAN and curr
 
 - **FlashForge Adventurer 5M / 5M Pro** through the local FlashForge HTTP/TCP APIs.
 - **Snapmaker U1** through its local Moonraker/Klipper API.
+- **Bambu Lab P1S / P2S / H2S / H2D / H2C** through local LAN/Developer Mode MQTT + FTPS.
 
 The application is named **Printer Fleet Controller**. From v0.11.2 the default application-data directory is manufacturer-neutral; existing installations are migrated automatically from the historical FlashForge-named directory so configured printers and queued work are retained.
 

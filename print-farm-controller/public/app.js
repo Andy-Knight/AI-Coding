@@ -1038,6 +1038,7 @@ discoveryResults.addEventListener('click', (event) => {
   const type = printer.adapterType || 'flashforge-ad5m';
   adapterTypeSelect.value = type;
   renderAdapterFields(type, {
+    model: printer.model || '',
     serialNumber: printer.serialNumber || '',
     httpPort: printer.httpPort || (type === 'snapmaker-u1' ? 7125 : 8898)
   });
@@ -2026,7 +2027,9 @@ async function openPrinter(id) {
     if (!tools.length) return `<div class="panel material-panel"><h3>Toolhead status</h3><div class="subtle">Material status is unavailable while the printer is offline.</div>${flashForgeMaterialDesignationMarkup(printer)}${flashForgeNozzleDesignationMarkup(printer)}</div>`;
     const materialHelp = printer.adapterType === 'flashforge-ad5m'
       ? "Filament type uses the controller's manual designation when set, otherwise the value reported by the FlashForge 5M local /detail API. Installed nozzle size uses the controller nozzle designation when set because the 5M API does not reliably expose it. The 5M API also does not expose U1-style filament colour/RFID metadata or a reliable live filament-presence value."
-      : 'Filament presence comes from each U1 motion sensor. Material and colour use the U1\'s effective per-tool configuration, including manual assignments for third-party filament; manually assigned filament colours can be written back to the idle printer. Official Snapmaker RFID colours remain locked. Nozzle size and XYZ offset come directly from each physical U1 extruder.';
+      : printer.adapterType === 'bambu-lab'
+        ? 'Material and colour are read from the Bambu printer/active AMS tray when the LAN status feed exposes them. H2 dual-head temperatures/nozzle state are reported per physical extruder. Native AMS slot mapping is deliberately held for review before unattended multi-material queue starts.'
+        : 'Filament presence comes from each U1 motion sensor. Material and colour use the U1\'s effective per-tool configuration, including manual assignments for third-party filament; manually assigned filament colours can be written back to the idle printer. Official Snapmaker RFID colours remain locked. Nozzle size and XYZ offset come directly from each physical U1 extruder.';
     return `<div class="panel material-panel">
       <h3>Toolhead status</h3>
       <div class="material-summary" data-material-summary>${escapeHtml(materialSummaryText(tools))}</div>
@@ -2041,7 +2044,7 @@ async function openPrinter(id) {
           ${capabilities.toolheadNozzleStatus ? `<small data-tool-nozzle="${tool.index}">${escapeHtml(`${nozzleDiameterText(tool.nozzleDiameter)}${tool.nozzleVolumeType ? ` · ${tool.nozzleVolumeType}` : ''}`)}</small>` : ''}
           ${capabilities.toolheadNozzleStatus ? `<small data-tool-offset="${tool.index}">${escapeHtml(toolOffsetText(tool.offset))}</small>` : ''}
           <small data-material-meta="${tool.index}">${escapeHtml(filamentMetaText(filament))}</small>
-          ${['snapmaker-u1','flashforge-ad5m'].includes(printer.adapterType) ? `<small class="material-rgb${filamentRgbText(filament.color) ? '' : ' hidden'}" data-material-rgb="${tool.index}">${escapeHtml(filamentRgbText(filament.color) || '')}</small>` : ''}
+          ${['snapmaker-u1','flashforge-ad5m','bambu-lab'].includes(printer.adapterType) ? `<small class="material-rgb${filamentRgbText(filament.color) ? '' : ' hidden'}" data-material-rgb="${tool.index}">${escapeHtml(filamentRgbText(filament.color) || '')}</small>` : ''}
           ${printer.adapterType === 'snapmaker-u1' ? u1FilamentColorControlMarkup(printer, tool) : ''}
         </div>`;
       }).join('')}</div>

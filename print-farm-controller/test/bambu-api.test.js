@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeBambuStatus } from '../src/bambu-api.js';
+import { normalizeBambuStatus, startBambuFile } from '../src/bambu-api.js';
 import { parseBambuSsdpPacket } from '../src/bambu-discovery.js';
 import { createBambuCameraSource, P1SnapshotSource, RtspsSnapshotSource } from '../src/bambu-camera.js';
 import { bambuModelProfile, prepareBambuConfig } from '../src/adapters/bambu-lab-adapter.js';
@@ -41,6 +41,12 @@ test('normalizes Bambu P1S status with active AMS material, temperatures and pro
   assert.equal(status.tools[0].filament.material, 'PETG');
   assert.equal(status.tools[0].filament.materialVariant, 'Basic');
   assert.equal(status.tools[0].filament.color, '#2F80ED');
+  assert.equal(status.materials.toolCount, 1);
+  assert.equal(status.materials.slotCount, 2);
+  assert.deepEqual(status.materialInventory.map((slot) => [slot.index, slot.material, slot.color]), [
+    [0, 'PLA', '#FF0000'],
+    [1, 'PETG', '#2F80ED']
+  ]);
 });
 
 test('normalizes H2 dual-extruder packed temperatures and active tool', () => {
@@ -149,7 +155,13 @@ test('Bambu automatic queue allows known single-material G-code but holds native
   };
   const state = {
     id:'bambu', name:'Bambu P1S', online:true,
-    status:{ status:'idle', fileName:null, tools:[{ index:0, nozzleDiameter:0.4, filament:{ present:true, material:'PLA', color:'#FF0000' } }] }
+    status:{ status:'idle', fileName:null,
+      tools:[{ index:0, nozzleDiameter:0.4, filament:{ present:true, material:'PLA', color:'#FF0000' } }],
+      materialInventory:[
+        { index:0, present:true, material:'PLA', color:'#FF0000', source:'AMS 1 slot 1' },
+        { index:1, present:true, material:'PETG', color:'#00FF00', source:'AMS 1 slot 2' }
+      ]
+    }
   };
   const single = evaluateQueueCompatibility({
     printer:{ id:'bambu' }, state, adapter,
@@ -159,10 +171,22 @@ test('Bambu automatic queue allows known single-material G-code but holds native
 
   const multi = evaluateQueueCompatibility({
     printer:{ id:'bambu' }, state, adapter,
-    job:{ fileName:'multi.gcode', requirements:{ toolCount:2, requiredTools:[0,1], logicalTools:[{ index:0, material:'PLA' },{ index:1, material:'PLA' }] } }
+    job:{ fileName:'multi.gcode', requirements:{ toolCount:2, requiredTools:[0,1], logicalTools:[{ index:0, material:'PLA', nozzleDiameter:0.4 },{ index:1, material:'PETG', nozzleDiameter:0.4 }] } }
   });
   assert.equal(multi.category, 'needs_review', JSON.stringify(multi));
   assert.ok(multi.reasons.some((reason) => reason.code === 'native_material_mapping_review'), JSON.stringify(multi));
+  assert.deepEqual(multi.materialSlotMap, { '0':0, '1':1 });
+  assert.equal(state.status.tools.length, 1, 'AMS slots must not inflate physical print-tool count');
+
+  const impossibleNozzle = evaluateQueueCompatibility({
+    printer:{ id:'bambu' }, state, adapter,
+    job:{ fileName:'wrong-nozzle.gcode', requirements:{ toolCount:2, requiredTools:[0,1], logicalTools:[
+      { index:0, material:'PLA', nozzleDiameter:0.4 },
+      { index:1, material:'PETG', nozzleDiameter:0.6 }
+    ] } }
+  });
+  assert.equal(impossibleNozzle.category, 'blocked', JSON.stringify(impossibleNozzle));
+  assert.ok(impossibleNozzle.reasons.some((reason) => reason.code === 'nozzle_mismatch'), JSON.stringify(impossibleNozzle));
 
   const project = evaluateQueueCompatibility({
     printer:{ id:'bambu' }, state, adapter,
@@ -170,4 +194,17 @@ test('Bambu automatic queue allows known single-material G-code but holds native
   });
   assert.equal(project.category, 'needs_review', JSON.stringify(project));
   assert.ok(project.reasons.some((reason) => reason.code === 'bambu_project_mapping_review'), JSON.stringify(project));
+});
+
+
+test('Bambu 3MF direct start is blocked until reviewed AMS and plate mapping exists', async () => {
+  await assert.rejects(
+    () => startBambuFile(
+      { host:'127.0.0.1', serialNumber:'SERIAL', adapterConfig:{ accessCode:'code' } },
+      'multi-material.3mf',
+      {},
+      bambuModelProfile('P1S')
+    ),
+    /requires reviewed AMS\/plate mapping/
+  );
 });

@@ -30,6 +30,7 @@ export const DEFAULT_CAPABILITIES = Object.freeze({
   nozzleDesignation: false,
   printToolMapping: false,
   nativeMultiMaterialWorkflow: false,
+  projectFileMappingReview: false,
   flowCalibrationBeforePrint: false,
   timeLapseBeforePrint: false,
   autoFilamentReplenishment: false,
