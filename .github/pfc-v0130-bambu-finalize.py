@@ -48,6 +48,16 @@ replace_once('public/app.js',
 '''          ${['snapmaker-u1','flashforge-ad5m'].includes(printer.adapterType) ? `<small class="material-rgb${filamentRgbText(filament.color) ? '' : ' hidden'}" data-material-rgb="${tool.index}">${escapeHtml(filamentRgbText(filament.color) || '')}</small>` : ''}''',
 '''          ${['snapmaker-u1','flashforge-ad5m','bambu-lab'].includes(printer.adapterType) ? `<small class="material-rgb${filamentRgbText(filament.color) ? '' : ' hidden'}" data-material-rgb="${tool.index}">${escapeHtml(filamentRgbText(filament.color) || '')}</small>` : ''}''')
 
+# The two adapter-specific colour rendering tests must follow the expanded
+# renderer allowlist as Bambu now uses the same hexadecimal/RGB status line.
+ui_test_path = root / 'test/ui-print-setup.test.js'
+ui_test_text = ui_test_path.read_text(encoding='utf-8')
+old_colour_allowlist = r"/\['snapmaker-u1','flashforge-ad5m'\]\.includes\(printer\.adapterType\)/"
+new_colour_allowlist = r"/\['snapmaker-u1','flashforge-ad5m','bambu-lab'\]\.includes\(printer\.adapterType\)/"
+if ui_test_text.count(old_colour_allowlist) != 2:
+    raise SystemExit('Expected exactly two legacy material colour allowlist assertions')
+ui_test_path.write_text(ui_test_text.replace(old_colour_allowlist, new_colour_allowlist), encoding='utf-8')
+
 replace_once('public/app.js',
 '''      const preflight = materialPreflightText(printer);\n      const materialCheck = await flashForgeFileMaterialCheck(printer, btn.dataset.printFile);\n      const flashForgePreflight = flashForgeFileMaterialText(materialCheck);\n      if (!confirm(`Start ${btn.dataset.printFile} on ${printer.name}?${preflight ? `\\n\\n${preflight}` : ''}${flashForgePreflight ? `\\n\\n${flashForgePreflight}` : ''}`)) return;''',
 '''      const preflight = materialPreflightText(printer);\n      const materialCheck = await flashForgeFileMaterialCheck(printer, btn.dataset.printFile);\n      const flashForgePreflight = flashForgeFileMaterialText(materialCheck);\n      const bambuProjectWarning = printer.adapterType === 'bambu-lab' && /\\.3mf$/i.test(btn.dataset.printFile)\n        ? 'Bambu 3MF direct start currently uses the printer default/external-spool path. AMS multi-material slot mapping is not yet controlled here; use Bambu Studio for multi-material 3MF jobs.'\n        : '';\n      if (!confirm(`Start ${btn.dataset.printFile} on ${printer.name}?${preflight ? `\\n\\n${preflight}` : ''}${flashForgePreflight ? `\\n\\n${flashForgePreflight}` : ''}${bambuProjectWarning ? `\\n\\n${bambuProjectWarning}` : ''}`)) return;''')
