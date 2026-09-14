@@ -1,92 +1,303 @@
 from pathlib import Path
+import json
 
-finalize = Path('.github/pfc-v0130-bambu-finalize.py')
-text = finalize.read_text(encoding='utf-8')
+ROOT = Path('print-farm-controller')
 
-# Update the current v0.12.8 U1 help text anchor used by the integration patch.
-old = "including manual assignments for third-party filament; RFID data is used as fallback. Nozzle size and XYZ offset come directly from each physical U1 extruder."
-new = "including manual assignments for third-party filament; manually assigned filament colours can be written back to the idle printer. Official Snapmaker RFID colours remain locked. Nozzle size and XYZ offset come directly from each physical U1 extruder."
-if old not in text:
-    raise SystemExit('old U1 material-help anchor not found in finalize helper')
-text = text.replace(old, new)
 
-# The direct-print confirmation template contains escaped newlines whose exact source
-# spelling changed in v0.12.8. Direct .3mf start is now blocked in the backend anyway,
-# so remove this optional browser-warning patch.
-marker = "replace_once('public/app.js',\n'''      const preflight = materialPreflightText(printer);"
-start = text.find(marker)
-if start < 0:
-    raise SystemExit('direct-print optional patch block not found')
-end = text.find('\n\n# Version.', start)
-if end < 0:
-    raise SystemExit('direct-print optional patch end not found')
-text = text[:start] + text[end:]
+def replace_once(path, old, new):
+    p = ROOT / path
+    text = p.read_text(encoding='utf-8')
+    count = text.count(old)
+    if count != 1:
+        raise SystemExit(f'{path}: expected one match, got {count} for {old[:100]!r}')
+    p.write_text(text.replace(old, new, 1), encoding='utf-8')
 
-# Insert the release note directly below the title instead of trying to replace only
-# the prefix of the existing v0.12.8 paragraph.
-readme_marker = "replace_once('README.md',\n'''> v0.12.8 adds **native Snapmaker U1 filament colour editing**'''"
-readme_start = text.find(readme_marker)
-if readme_start < 0:
-    raise SystemExit('fragile README release-note patch block not found')
-readme_end = text.find("\nreplace_once('README.md',\n'''- **Snapmaker U1**", readme_start)
-if readme_end < 0:
-    raise SystemExit('README release-note patch end not found')
-text = text[:readme_start] + text[readme_end + 1:]
 
-# Preserve the existing fixed physical tool-count interlock for every adapter that
-# does not explicitly advertise a native material-changing workflow. Bambu AMS is
-# the exception: several slicer materials can use one physical nozzle, but those jobs
-# are still held for review until an explicit slot map exists.
-needle = "'''  // A native material-changing workflow (for example Bambu AMS) can service\\n"
-replacement = "'''  if (!capabilities.nativeMultiMaterialWorkflow && Number.isFinite(Number(limits.toolCount)) && requiredToolCount > Number(limits.toolCount)) {\\n    incompatible.push({ code:'insufficient_tool_count', text:`File requires ${requiredToolCount} tools; printer has ${Number(limits.toolCount)}` });\\n  }\\n\\n  // A native material-changing workflow (for example Bambu AMS) can service\\n"
-if text.count(needle) != 1:
-    raise SystemExit(f'expected one native-workflow replacement anchor, got {text.count(needle)}')
-text = text.replace(needle, replacement, 1)
-
-# Correct the context wording now that .3mf is storage-only until an explicit
-# AMS/plate mapping flow authorises project start.
-text = text.replace(
-    'FTPS printer storage listing/upload/verification, local G-code/3MF start path,',
-    'FTPS printer storage listing/upload/verification, local G-code start path plus 3MF storage support,'
+# The finalizer deliberately exempts native material-changing printers from the
+# logical slicer-tool count check. Restore the original physical-tool safety rule
+# for every non-native workflow. Bambu AMS is represented separately below as
+# material slots; AMS slots must never inflate limits.toolCount or status.tools.
+replace_once(
+    'src/queue-compatibility.js',
+    "  // A native material-changing workflow (for example Bambu AMS) can service\n",
+    "  if (!capabilities.nativeMultiMaterialWorkflow && Number.isFinite(Number(limits.toolCount)) && requiredToolCount > Number(limits.toolCount)) {\n"
+    "    incompatible.push({ code:'insufficient_tool_count', text:`File requires ${requiredToolCount} tools; printer has ${Number(limits.toolCount)}` });\n"
+    "  }\n\n"
+    "  // A native material-changing workflow (for example Bambu AMS) can service\n"
 )
-text = text.replace('v0.13.0 regression suite: **132 passing tests, 0 failures**.',
-                    'v0.13.0 regression suite: **133 passing tests, 0 failures**.')
-finalize.write_text(text, encoding='utf-8')
 
-# Add the v0.13.0 release note to the current README before the finalize helper bumps
-# the title itself.
-readme = Path('print-farm-controller/README.md')
-readme_text = readme.read_text(encoding='utf-8')
-anchor = '# Printer Fleet Controller v0.12.8\n\n'
-if readme_text.count(anchor) != 1:
-    raise SystemExit('README title anchor not found exactly once')
-release_note = (
-    '> v0.13.0 adds **Bambu Lab P1S, P2S, H2S, H2D and H2C** support through local LAN/Developer Mode. '
-    'The Bambu adapter uses MQTT-over-TLS for live status/control and implicit FTPS for printer-local file listing, upload and verification; '
-    'model-specific temperature/tool limits are enforced. P1S uses its native JPEG camera transport, while P2S/H2 cameras use RTSPS when `ffmpeg` is available. '
-    'Single-material G-code can participate in the automatic compatible-printer queue. Bambu `.3mf` files can be stored on the printer, but project start and native multi-material/AMS workflows are deliberately held until explicit AMS/plate mapping is added.\n\n'
+# Add manufacturer-neutral material-slot matching for printers whose native
+# material changer can service multiple slicer materials through fewer physical
+# extruders. This is informational/safety validation only: native multi-material
+# jobs remain Needs review until an explicit start-time slot mapping workflow exists.
+replace_once(
+    'src/queue-compatibility.js',
+    "function mapLogicalTools(requirements = {}, status = {}) {\n",
+    "function materialSlotMatches(required, slot) {\n"
+    "  if (slot?.present === false) return false;\n"
+    "  const requiredMaterial = canonicalMaterial(required?.material);\n"
+    "  const currentMaterial = canonicalMaterial(slot?.material || slot?.type);\n"
+    "  if (requiredMaterial && currentMaterial && requiredMaterial !== currentMaterial) return false;\n"
+    "  const requiredColor = normalizeColor(required?.color);\n"
+    "  const currentColor = normalizeColor(slot?.color);\n"
+    "  if (requiredColor && currentColor && requiredColor !== currentColor) return false;\n"
+    "  return true;\n"
+    "}\n\n"
+    "function nativeMaterialSlots(status = {}) {\n"
+    "  if (Array.isArray(status.materialInventory)) return status.materialInventory;\n"
+    "  if (Array.isArray(status.materials?.slots)) return status.materials.slots;\n"
+    "  return [];\n"
+    "}\n\n"
+    "function mapNativeMaterialSlots(requirements = {}, status = {}) {\n"
+    "  const logicalTools = Array.isArray(requirements.logicalTools) ? requirements.logicalTools : [];\n"
+    "  const slots = nativeMaterialSlots(status)\n"
+    "    .filter((slot) => slot?.present !== false)\n"
+    "    .filter((slot) => Number.isInteger(Number(slot?.index)));\n"
+    "  if (!logicalTools.length) return { materialSlotMap:null, reasons:[], review:[] };\n"
+    "  if (!slots.length) {\n"
+    "    return {\n"
+    "      materialSlotMap:null,\n"
+    "      reasons:[],\n"
+    "      review:[{ code:'material_inventory_unknown', text:'Printer material-slot inventory is not available for this multi-material job' }]\n"
+    "    };\n"
+    "  }\n\n"
+    "  const descriptors = logicalTools.map((logical) => ({\n"
+    "    logical,\n"
+    "    candidates:slots.filter((slot) => materialSlotMatches(logical, slot))\n"
+    "  }));\n"
+    "  const missing = descriptors.filter((item) => !item.candidates.length);\n"
+    "  if (missing.length) {\n"
+    "    return {\n"
+    "      materialSlotMap:null,\n"
+    "      review:[],\n"
+    "      reasons:missing.map(({ logical }) => ({\n"
+    "        code:'material_slot_not_loaded',\n"
+    "        text:`No loaded material slot matches file T${logical.index} (${requirementText(logical)})`\n"
+    "      }))\n"
+    "    };\n"
+    "  }\n\n"
+    "  const ordered = [...descriptors].sort((a, b) => a.candidates.length - b.candidates.length || Number(a.logical.index) - Number(b.logical.index));\n"
+    "  const assigned = new Map();\n"
+    "  const usedSlots = new Set();\n"
+    "  function choose(position) {\n"
+    "    if (position >= ordered.length) return true;\n"
+    "    const descriptor = ordered[position];\n"
+    "    for (const slot of descriptor.candidates) {\n"
+    "      const slotIndex = Number(slot.index);\n"
+    "      if (usedSlots.has(slotIndex)) continue;\n"
+    "      usedSlots.add(slotIndex);\n"
+    "      assigned.set(Number(descriptor.logical.index), slot);\n"
+    "      if (choose(position + 1)) return true;\n"
+    "      assigned.delete(Number(descriptor.logical.index));\n"
+    "      usedSlots.delete(slotIndex);\n"
+    "    }\n"
+    "    return false;\n"
+    "  }\n\n"
+    "  if (!choose(0)) {\n"
+    "    return {\n"
+    "      materialSlotMap:null,\n"
+    "      review:[],\n"
+    "      reasons:[{ code:'material_slot_mapping_conflict', text:'No unique loaded material-slot mapping satisfies all file material requirements' }]\n"
+    "    };\n"
+    "  }\n\n"
+    "  const materialSlotMap = {};\n"
+    "  for (const logical of logicalTools) {\n"
+    "    materialSlotMap[String(logical.index)] = Number(assigned.get(Number(logical.index)).index);\n"
+    "  }\n"
+    "  return { materialSlotMap, reasons:[], review:[] };\n"
+    "}\n\n"
+    "function validateNativeMaterialNozzles(requirements = {}, status = {}) {\n"
+    "  const logicalTools = Array.isArray(requirements.logicalTools) ? requirements.logicalTools : [];\n"
+    "  const requiredNozzles = [...new Set(logicalTools\n"
+    "    .map((tool) => Number(tool?.nozzleDiameter))\n"
+    "    .filter((diameter) => Number.isFinite(diameter) && diameter > 0))];\n"
+    "  if (!requiredNozzles.length) return { reasons:[], review:[] };\n"
+    "  const physicalTools = (Array.isArray(status.tools) ? status.tools : [])\n"
+    "    .filter((tool) => Number.isFinite(Number(tool?.nozzleDiameter)));\n"
+    "  if (!physicalTools.length) {\n"
+    "    return { reasons:[], review:[{ code:'nozzle_unknown', text:'Installed physical nozzle size is not reported for this multi-material job' }] };\n"
+    "  }\n"
+    "  const missing = requiredNozzles.filter((diameter) => !physicalTools.some((tool) => sameNozzle(diameter, tool.nozzleDiameter)));\n"
+    "  return {\n"
+    "    reasons:missing.map((diameter) => ({\n"
+    "      code:'nozzle_mismatch',\n"
+    "      text:`No physical print tool has the required ${diameter.toFixed(1)} mm nozzle`\n"
+    "    })),\n"
+    "    review:[]\n"
+    "  };\n"
+    "}\n\n"
+    "function mapLogicalTools(requirements = {}, status = {}) {\n"
 )
-readme.write_text(readme_text.replace(anchor, anchor + release_note, 1), encoding='utf-8')
 
-# Safety: no Bambu project file may be directly started until the controller has an
-# explicit reviewed AMS/plate map. The lower-level project command remains available
-# behind an opt-in flag for the future mapping workflow.
-bambu_api = Path('print-farm-controller/src/bambu-api.js')
-api_text = bambu_api.read_text(encoding='utf-8')
-old_branch = "  if (/\\.3mf$/i.test(name)) {\n    const payload = {"
-new_branch = "  if (/\\.3mf$/i.test(name)) {\n    if (options.allowProjectStart !== true) {\n      throw new BambuApiError('Bambu 3MF project start requires reviewed AMS/plate mapping; upload/storage is supported but direct start is disabled');\n    }\n    const payload = {"
-if api_text.count(old_branch) != 1:
-    raise SystemExit('Bambu .3mf start branch anchor not found exactly once')
-bambu_api.write_text(api_text.replace(old_branch, new_branch, 1), encoding='utf-8')
+replace_once(
+    'src/queue-compatibility.js',
+    "  let toolMap = null;\n  if (!incompatible.length && capabilities.printToolMapping && requiredToolCount) {\n",
+    "  let toolMap = null;\n"
+    "  let materialSlotMap = null;\n"
+    "  if (!incompatible.length && requiredToolCount > 1 && capabilities.nativeMultiMaterialWorkflow && !capabilities.printToolMapping) {\n"
+    "    const mappedMaterials = mapNativeMaterialSlots(requirements, state?.status || {});\n"
+    "    materialSlotMap = mappedMaterials.materialSlotMap;\n"
+    "    blocked.push(...mappedMaterials.reasons);\n"
+    "    review.push(...mappedMaterials.review);\n"
+    "    const nozzleCheck = validateNativeMaterialNozzles(requirements, state?.status || {});\n"
+    "    blocked.push(...nozzleCheck.reasons);\n"
+    "    review.push(...nozzleCheck.review);\n"
+    "  }\n"
+    "  if (!incompatible.length && capabilities.printToolMapping && requiredToolCount) {\n"
+)
 
-# Regression: verify the safety guard triggers before any MQTT connection is attempted.
-test_file = Path('print-farm-controller/test/bambu-api.test.js')
+replace_once(
+    'src/queue-compatibility.js',
+    "    compatible: !incompatible.length,\n    toolMap,\n    reasons: [...incompatible, ...review, ...blocked]\n",
+    "    compatible: !incompatible.length,\n    toolMap,\n    materialSlotMap,\n    reasons: [...incompatible, ...review, ...blocked]\n"
+)
+
+# Expose the complete AMS/external-spool inventory separately from physical
+# extruders. This keeps P1/P2/H2S as one physical print tool even with many AMS
+# slots, while H2D/H2C retain their actual two-extruder topology.
+replace_once(
+    'src/bambu-api.js',
+    "function normalizeFilament(print = {}) {\n",
+    "function normalizeMaterialSlot(tray, index, source, slotType) {\n"
+    "  if (!tray || typeof tray !== 'object') return null;\n"
+    "  const material = String(tray.tray_type || tray.type || '').trim() || null;\n"
+    "  const color = normalizeHex(tray.tray_color || tray.color);\n"
+    "  const variant = String(tray.tray_sub_brands || tray.sub_brands || '').trim() || null;\n"
+    "  const vendor = String(tray.tray_info_idx || '').trim() || null;\n"
+    "  const present = Boolean(material || color || variant || vendor);\n"
+    "  return {\n"
+    "    index:Number(index),\n"
+    "    present,\n"
+    "    metadataAvailable:present,\n"
+    "    materialSource:'printer',\n"
+    "    material,\n"
+    "    materialVariant:variant,\n"
+    "    color,\n"
+    "    vendor,\n"
+    "    source,\n"
+    "    slotType\n"
+    "  };\n"
+    "}\n\n"
+    "function normalizeMaterialInventory(print = {}) {\n"
+    "  const ams = print.ams || {};\n"
+    "  const slots = [];\n"
+    "  const units = Array.isArray(ams.ams) ? ams.ams : [];\n"
+    "  units.forEach((unit, unitPosition) => {\n"
+    "    const unitId = Number.isInteger(Number(unit?.id)) ? Number(unit.id) : unitPosition;\n"
+    "    const trays = Array.isArray(unit?.tray) ? unit.tray : [];\n"
+    "    trays.forEach((tray, trayPosition) => {\n"
+    "      const trayId = Number.isInteger(Number(tray?.id)) ? Number(tray.id) : trayPosition;\n"
+    "      const slot = normalizeMaterialSlot(tray, unitId * 4 + trayId, `AMS ${unitId + 1} slot ${trayId + 1}`, 'ams');\n"
+    "      if (slot) slots.push(slot);\n"
+    "    });\n"
+    "  });\n"
+    "  const external = ams.vt_tray || print.vt_tray || null;\n"
+    "  if (external) {\n"
+    "    const slot = normalizeMaterialSlot(external, 254, 'External spool', 'external');\n"
+    "    if (slot) slots.push(slot);\n"
+    "  }\n"
+    "  return slots;\n"
+    "}\n\n"
+    "function normalizeFilament(print = {}) {\n"
+)
+
+replace_once(
+    'src/bambu-api.js',
+    "  const tools = normalizeExtruderTools(print, modelProfile);\n  const activeTool = tools.find((tool) => tool.active) || tools[0];\n",
+    "  const tools = normalizeExtruderTools(print, modelProfile);\n"
+    "  const materialInventory = normalizeMaterialInventory(print);\n"
+    "  const activeTool = tools.find((tool) => tool.active) || tools[0];\n"
+)
+
+replace_once(
+    'src/bambu-api.js',
+    "    tools,\n    materials:{\n      available:tools.some((tool) => tool.filament?.metadataAvailable || tool.filament?.present !== null),\n      loadedCount:tools.filter((tool) => tool.filament?.present === true).length,\n      toolCount:tools.length,\n      metadataCount:tools.filter((tool) => tool.filament?.metadataAvailable).length,\n      tools:tools.map((tool) => tool.filament)\n    },\n",
+    "    tools,\n"
+    "    materialInventory,\n"
+    "    materials:{\n"
+    "      available:materialInventory.length > 0 || tools.some((tool) => tool.filament?.metadataAvailable || tool.filament?.present !== null),\n"
+    "      loadedCount:materialInventory.length ? materialInventory.filter((slot) => slot.present === true).length : tools.filter((tool) => tool.filament?.present === true).length,\n"
+    "      toolCount:tools.length,\n"
+    "      slotCount:materialInventory.length,\n"
+    "      metadataCount:materialInventory.length ? materialInventory.filter((slot) => slot.metadataAvailable).length : tools.filter((tool) => tool.filament?.metadataAvailable).length,\n"
+    "      tools:tools.map((tool) => tool.filament),\n"
+    "      slots:materialInventory\n"
+    "    },\n"
+)
+
+# Safety: project-file start remains disabled until the future reviewed AMS/plate
+# mapping flow explicitly opts in. Upload/storage support remains available.
+replace_once(
+    'src/bambu-api.js',
+    "  if (/\\.3mf$/i.test(name)) {\n    const payload = {",
+    "  if (/\\.3mf$/i.test(name)) {\n"
+    "    if (options.allowProjectStart !== true) {\n"
+    "      throw new BambuApiError('Bambu 3MF project start requires reviewed AMS/plate mapping; upload/storage is supported but direct start is disabled');\n"
+    "    }\n"
+    "    const payload = {"
+)
+
+# Extend existing Bambu regressions without inflating AMS slots into tools.
+test_file = ROOT / 'test/bambu-api.test.js'
 test_text = test_file.read_text(encoding='utf-8')
 old_import = "import { normalizeBambuStatus } from '../src/bambu-api.js';"
 new_import = "import { normalizeBambuStatus, startBambuFile } from '../src/bambu-api.js';"
 if test_text.count(old_import) != 1:
     raise SystemExit('Bambu test import anchor not found exactly once')
 test_text = test_text.replace(old_import, new_import, 1)
+
+old_assert = "  assert.equal(status.tools[0].filament.color, '#2F80ED');\n"
+new_assert = (
+    "  assert.equal(status.tools[0].filament.color, '#2F80ED');\n"
+    "  assert.equal(status.materials.toolCount, 1);\n"
+    "  assert.equal(status.materials.slotCount, 2);\n"
+    "  assert.deepEqual(status.materialInventory.map((slot) => [slot.index, slot.material, slot.color]), [\n"
+    "    [0, 'PLA', '#FF0000'],\n"
+    "    [1, 'PETG', '#2F80ED']\n"
+    "  ]);\n"
+)
+if test_text.count(old_assert) != 1:
+    raise SystemExit('Bambu inventory assertion anchor not found exactly once')
+test_text = test_text.replace(old_assert, new_assert, 1)
+
+old_state = "    status:{ status:'idle', fileName:null, tools:[{ index:0, nozzleDiameter:0.4, filament:{ present:true, material:'PLA', color:'#FF0000' } }] }\n"
+new_state = (
+    "    status:{ status:'idle', fileName:null,\n"
+    "      tools:[{ index:0, nozzleDiameter:0.4, filament:{ present:true, material:'PLA', color:'#FF0000' } }],\n"
+    "      materialInventory:[\n"
+    "        { index:0, present:true, material:'PLA', color:'#FF0000', source:'AMS 1 slot 1' },\n"
+    "        { index:1, present:true, material:'PETG', color:'#00FF00', source:'AMS 1 slot 2' }\n"
+    "      ]\n"
+    "    }\n"
+)
+if test_text.count(old_state) != 1:
+    raise SystemExit('Bambu queue state anchor not found exactly once')
+test_text = test_text.replace(old_state, new_state, 1)
+
+test_text = test_text.replace(
+    "logicalTools:[{ index:0, material:'PLA' },{ index:1, material:'PLA' }]",
+    "logicalTools:[{ index:0, material:'PLA', nozzleDiameter:0.4 },{ index:1, material:'PETG', nozzleDiameter:0.4 }]",
+    1
+)
+old_multi_assert = "  assert.ok(multi.reasons.some((reason) => reason.code === 'native_material_mapping_review'), JSON.stringify(multi));\n"
+new_multi_assert = (
+    "  assert.ok(multi.reasons.some((reason) => reason.code === 'native_material_mapping_review'), JSON.stringify(multi));\n"
+    "  assert.deepEqual(multi.materialSlotMap, { '0':0, '1':1 });\n"
+    "  assert.equal(state.status.tools.length, 1, 'AMS slots must not inflate physical print-tool count');\n\n"
+    "  const impossibleNozzle = evaluateQueueCompatibility({\n"
+    "    printer:{ id:'bambu' }, state, adapter,\n"
+    "    job:{ fileName:'wrong-nozzle.gcode', requirements:{ toolCount:2, requiredTools:[0,1], logicalTools:[\n"
+    "      { index:0, material:'PLA', nozzleDiameter:0.4 },\n"
+    "      { index:1, material:'PETG', nozzleDiameter:0.6 }\n"
+    "    ] } }\n"
+    "  });\n"
+    "  assert.equal(impossibleNozzle.category, 'blocked', JSON.stringify(impossibleNozzle));\n"
+    "  assert.ok(impossibleNozzle.reasons.some((reason) => reason.code === 'nozzle_mismatch'), JSON.stringify(impossibleNozzle));\n"
+)
+if test_text.count(old_multi_assert) != 1:
+    raise SystemExit('Bambu multi-material assertion anchor not found exactly once')
+test_text = test_text.replace(old_multi_assert, new_multi_assert, 1)
+
 test_text += """
 
 test('Bambu 3MF direct start is blocked until reviewed AMS and plate mapping exists', async () => {
@@ -103,4 +314,23 @@ test('Bambu 3MF direct start is blocked until reviewed AMS and plate mapping exi
 """
 test_file.write_text(test_text, encoding='utf-8')
 
-print('Corrected v0.12.8 integration anchors, preserved tool-count safety, and hardened Bambu 3MF start safety')
+# Correct release handoff wording/count after the finalizer has updated the docs.
+context_path = ROOT / 'PROJECT_CONTEXT.md'
+context = context_path.read_text(encoding='utf-8')
+context = context.replace(
+    'FTPS printer storage listing/upload/verification, local G-code/3MF start path,',
+    'FTPS printer storage listing/upload/verification, local G-code start path plus 3MF storage support,'
+)
+context = context.replace(
+    'v0.13.0 regression suite: **132 passing tests, 0 failures**.',
+    'v0.13.0 regression suite: **133 passing tests, 0 failures**.'
+)
+context_path.write_text(context, encoding='utf-8')
+
+# Keep package metadata aligned with the newly supported manufacturer family.
+pkg_path = ROOT / 'package.json'
+pkg = json.loads(pkg_path.read_text(encoding='utf-8'))
+pkg['description'] = 'Printer Fleet Controller: local-first multi-manufacturer 3D printer fleet control with FlashForge Adventurer 5M/5M Pro, Snapmaker U1, and Bambu Lab support'
+pkg_path.write_text(json.dumps(pkg, indent=2) + '\n', encoding='utf-8')
+
+print('Applied Bambu AMS material-slot model, restored physical-tool safety, and hardened 3MF start safety')
