@@ -28,7 +28,7 @@ jobs:
         working-directory: print-farm-controller
         run: |
           npm test | tee /tmp/pfc-tests.txt
-          grep -q '# pass 132' /tmp/pfc-tests.txt
+          grep -q '# pass 133' /tmp/pfc-tests.txt
           grep -q '# fail 0' /tmp/pfc-tests.txt
       - name: Commit tested v0.13.0 update
         run: |
