@@ -22,6 +22,16 @@ jobs:
           fetch-depth: 0
       - name: Apply v0.13.0 integration patch
         run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('.github/pfc-v0130-bambu-finalize.py')
+          text = p.read_text(encoding='utf-8')
+          old = "including manual assignments for third-party filament; RFID data is used as fallback. Nozzle size and XYZ offset come directly from each physical U1 extruder."
+          new = "including manual assignments for third-party filament; manually assigned filament colours can be written back to the idle printer. Official Snapmaker RFID colours remain locked. Nozzle size and XYZ offset come directly from each physical U1 extruder."
+          if old not in text:
+              raise SystemExit('U1 material-help finalizer anchor not found')
+          p.write_text(text.replace(old, new), encoding='utf-8')
+          PY
           python .github/pfc-v0130-bambu-finalize.py
           python .github/pfc-v0130-fix-helper.py
       - name: Run full test suite
