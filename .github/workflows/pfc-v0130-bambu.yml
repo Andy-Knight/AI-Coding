@@ -22,8 +22,8 @@ jobs:
           fetch-depth: 0
       - name: Apply v0.13.0 integration patch
         run: |
-          python .github/pfc-v0130-fix-helper.py
           python .github/pfc-v0130-bambu-finalize.py
+          python .github/pfc-v0130-fix-helper.py
       - name: Run full test suite
         working-directory: print-farm-controller
         run: |
