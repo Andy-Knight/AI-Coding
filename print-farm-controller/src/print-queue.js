@@ -1204,4 +1204,4 @@ export class PrintQueueService {
   }
 }
 
-export const printQueueHelpers = { printIsActive, printerCanStart, matchesFile, sanitizeOptions, buildToolSnapshot, checkToolSnapshot };
+export const printQueueHelpers = { printIsActive, printerCanStart, matchesFile, sanitizeOptions, buildToolSnapshot, checkToolSnapshot, normalizePriority, priorityInfo, compareQueuePriority };
