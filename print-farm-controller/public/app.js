@@ -243,8 +243,22 @@ function setLiveState(state) {
   liveIndicator.querySelector('span').textContent = label;
 }
 
+const CANCELLED_PRINTER_STATES = new Set(['cancel', 'cancelled', 'canceled', 'stopped']);
+
+function rawStateName(printer) {
+  return printer.online ? String(printer.status?.status || 'unknown') : 'offline';
+}
+
 function stateName(printer) {
-  return printer.online ? (printer.status?.status || 'unknown') : 'offline';
+  const raw = rawStateName(printer);
+  if (
+    printer.online
+    && printer.adapterType === 'flashforge-ad5m'
+    && CANCELLED_PRINTER_STATES.has(raw.toLowerCase())
+  ) {
+    return queueBedClearance(printer.id) ? 'cancelled' : 'ready';
+  }
+  return raw;
 }
 
 function queueBedClearance(printerId) {
@@ -626,7 +640,9 @@ function updateCard(card, printer) {
   card.querySelector('[data-host]').textContent = `${printer.host}${printer.model ? ` · ${printer.model}` : ''}`;
   const badge = card.querySelector('[data-state]');
   badge.textContent = state;
-  badge.className = `badge ${state}`;
+  badge.className = `badge ${state.toLowerCase()}`;
+  const rawState = rawStateName(printer);
+  badge.title = rawState.toLowerCase() !== state.toLowerCase() ? `Printer reports ${rawState}` : '';
   card.querySelector('[data-job-name]').textContent = s?.fileName || (printer.online ? 'No active job' : 'Printer offline');
   card.querySelector('[data-progress-value]').textContent = `${progress}%`;
   card.querySelector('[data-progress-bar]').style.width = `${progress}%`;
@@ -652,7 +668,10 @@ function updateCard(card, printer) {
   clearanceStrip?.classList.toggle('hidden', !clearance);
   if (clearance) {
     const summary = card.querySelector('[data-bed-clearance-summary]');
-    if (summary) summary.textContent = `${clearance.fileName} finished · queue paused`;
+    if (summary) {
+      const outcome = String(clearance.jobStatus || '').toLowerCase() === 'cancelled' ? 'cancelled' : 'finished';
+      summary.textContent = `${clearance.fileName} ${outcome} · queue paused`;
+    }
   }
   updateCameraSlot(card, printer);
 }
@@ -1857,8 +1876,15 @@ function updateOpenPrinterTelemetry() {
     const el = printerDetail.querySelector(selector);
     if (el) el.textContent = text;
   };
-  set('[data-detail-state]', stateName(printer));
-  set('[data-detail-health]', printer.online ? `Last response ${formatLastSeen(printer.lastSeen)} · ${printer.latencyMs ?? '—'} ms` : `Offline · last seen ${formatLastSeen(printer.lastSeen)}`);
+  const displayState = stateName(printer);
+  const rawState = rawStateName(printer);
+  set('[data-detail-state]', displayState);
+  set(
+    '[data-detail-health]',
+    printer.online
+      ? `Last response ${formatLastSeen(printer.lastSeen)} · ${printer.latencyMs ?? '—'} ms${rawState.toLowerCase() !== displayState.toLowerCase() ? ` · Printer reports ${rawState}` : ''}`
+      : `Offline · last seen ${formatLastSeen(printer.lastSeen)}`
+  );
   set('[data-detail-file]', s?.fileName || 'No active job');
   set('[data-detail-progress]', `${Math.round(s?.progress || 0)}%`);
   set('[data-detail-layer]', s && s.totalLayers ? `${s.currentLayer} / ${s.totalLayers}` : '—');

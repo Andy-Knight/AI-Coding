@@ -1,6 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { PrintQueueService } from '../src/print-queue.js';
+import { PrintQueueService, printQueueHelpers } from '../src/print-queue.js';
+
+
+test('completed Snapmaker status can start a new job when Moonraker retains the previous filename', () => {
+  const staleCompletedStatus = { status:'idle', fileName:'previous-print.gcode', progress:100 };
+  assert.equal(printQueueHelpers.printerCanStart(staleCompletedStatus), true);
+  assert.equal(printQueueHelpers.printerCanStart({ ...staleCompletedStatus, status:'complete' }), true);
+  assert.equal(printQueueHelpers.printerCanStart({ ...staleCompletedStatus, status:'printing' }), false);
+});
 
 class FakeFleetState {
   constructor(states = []) {
@@ -265,6 +273,44 @@ test('completed queued print blocks the next job until bed clearance is confirme
   await service.clearBed('p1');
   await waitFor(() => starts.length === 2);
   assert.deepEqual(starts, ['first.gcode', 'second.gcode']);
+  assert.equal(service.getSnapshot().awaitingClearance, 0);
+  service.stop();
+});
+
+test('FlashForge CANCEL state requires clearance then permits the next queued job despite a stale filename', async () => {
+  const fleetState = new FakeFleetState([{
+    id:'ff',
+    name:'AD5M Pro',
+    online:true,
+    status:{ status:'CANCEL', fileName:'cancelled-print.gcode', progress:42 }
+  }]);
+  const store = memoryStore();
+  const starts = [];
+  const service = new PrintQueueService({
+    fleetState,
+    chamberPreheat:{ isActive:() => false, stop:async () => {} },
+    getPrinterFn:async () => ({ id:'ff', name:'AD5M Pro', adapterType:'flashforge-ad5m' }),
+    adapterResolver:() => ({
+      capabilities:{ printLocalFile:true },
+      getStatus:async () => fleetState.getPrinterState('ff').status,
+      printLocalFile:async (fileName) => starts.push(fileName)
+    }),
+    loadJobsFn:store.load,
+    saveJobsFn:store.save
+  });
+
+  await service.start();
+  const next = await service.add({ printerId:'ff', fileName:'next-print.gcode' });
+  await new Promise((resolve) => setTimeout(resolve, 30));
+
+  assert.equal(service.getJob(next.id).status, 'queued');
+  assert.deepEqual(starts, []);
+  assert.equal(service.getSnapshot().awaitingClearance, 1);
+  assert.equal(service.getSnapshot().bedClearance[0].fileName, 'cancelled-print.gcode');
+
+  await service.clearBed('ff');
+  await waitFor(() => starts.length === 1);
+  assert.deepEqual(starts, ['next-print.gcode']);
   assert.equal(service.getSnapshot().awaitingClearance, 0);
   service.stop();
 });

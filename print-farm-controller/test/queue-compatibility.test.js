@@ -1,6 +1,21 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { evaluateQueueCompatibility } from '../src/queue-compatibility.js';
+import { evaluateQueueCompatibility, queueCompatibilityHelpers } from '../src/queue-compatibility.js';
+
+
+test('completed Snapmaker status ignores Moonraker stale filename during compatibility checks', () => {
+  const staleCompletedStatus = { status:'idle', fileName:'previous-print.gcode', progress:100 };
+  assert.equal(queueCompatibilityHelpers.isBusy(staleCompletedStatus), false);
+  assert.equal(queueCompatibilityHelpers.isBusy({ ...staleCompletedStatus, status:'complete' }), false);
+  assert.equal(queueCompatibilityHelpers.isBusy({ ...staleCompletedStatus, status:'printing' }), true);
+});
+
+test('FlashForge CANCEL state ignores retained filename after operator-safe terminal handling', () => {
+  const staleCancelledStatus = { status:'CANCEL', fileName:'cancelled-print.gcode', progress:42 };
+  assert.equal(queueCompatibilityHelpers.isBusy(staleCancelledStatus), false);
+  assert.equal(queueCompatibilityHelpers.isBusy({ ...staleCancelledStatus, status:'cancelled' }), false);
+  assert.equal(queueCompatibilityHelpers.isBusy({ ...staleCancelledStatus, status:'printing' }), true);
+});
 
 const stagedJob = {
   stagedFile:{ id:'x', requirements:{

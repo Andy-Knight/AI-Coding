@@ -5,6 +5,14 @@ import fs from 'node:fs';
 const app = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
 const styles = fs.readFileSync(new URL('../public/styles.css', import.meta.url), 'utf8');
 
+test('FlashForge cancelled state displays clearance-aware readiness while retaining raw status', () => {
+  assert.match(app, /const CANCELLED_PRINTER_STATES = new Set/);
+  assert.match(app, /printer\.adapterType === 'flashforge-ad5m'/);
+  assert.match(app, /return queueBedClearance\(printer\.id\) \? 'cancelled' : 'ready'/);
+  assert.match(app, /Printer reports \${rawState}/);
+  assert.match(app, /clearance\.jobStatus[\s\S]*'cancelled'/);
+});
+
 test('U1 print setup uses material swatches instead of raw loaded-colour option text', () => {
   assert.match(app, /function physicalToolChoiceMarkup/);
   assert.match(app, /class=\\?"material-swatch/);

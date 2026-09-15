@@ -10,6 +10,8 @@ import { assessMaterialCompatibility } from './file-material-metadata.js';
 
 const TERMINAL_STATES = new Set(['completed', 'failed', 'cancelled']);
 const ACTIVE_PRINTER_STATES = new Set(['printing', 'working', 'building_from_sd', 'pause', 'paused']);
+const IDLE_PRINTER_STATES = new Set(['idle', 'ready', 'standby', 'complete', 'completed', 'cancel', 'cancelled', 'canceled', 'stopped']);
+const CANCELLED_PRINTER_STATES = new Set(['cancel', 'cancelled', 'canceled', 'stopped']);
 const ACTIVE_QUEUE_STATES = new Set(['uploading', 'preflight', 'starting', 'printing']);
 const ERROR_PRINTER_STATES = new Set(['error', 'failed']);
 const START_TIMEOUT_MS = 60_000;
@@ -37,8 +39,18 @@ function printIsActive(status = {}) {
 
 function printerCanStart(status = {}) {
   const state = normalizeState(status.status);
+  // Moonraker and FlashForge may retain the previous filename after a print
+  // completes or is cancelled. An explicit terminal/idle state is authoritative;
+  // cancellation safety is enforced independently by the clearance interlock.
+  if (IDLE_PRINTER_STATES.has(state)) return true;
   if (status.fileName || printIsActive(status)) return false;
-  return ['', 'idle', 'ready', 'standby', 'complete', 'completed'].includes(state);
+  return state === '';
+}
+
+function cancellationFingerprint(status = {}) {
+  const state = normalizeState(status.status);
+  if (!CANCELLED_PRINTER_STATES.has(state)) return null;
+  return `${state}|${basename(status.fileName || '')}`;
 }
 
 function matchesFile(status = {}, fileName) {
@@ -213,6 +225,10 @@ export class PrintQueueService {
     this.processing = false;
     this.pendingReconcile = false;
     this.startingPrinters = new Set();
+    // FlashForge can hold CANCEL and the old filename indefinitely. Remember
+    // operator acknowledgement for that exact terminal report until the printer
+    // leaves the cancelled state.
+    this.cancelledStateAcknowledgements = new Map();
     this.saveChain = Promise.resolve();
   }
 
@@ -414,38 +430,61 @@ export class PrintQueueService {
     return this.getProductionBatches().find((batch) => batch.id === batchId);
   }
 
+  cancelledStateNeedsClearance(printerId) {
+    const state = this.fleetState.getPrinterState(printerId);
+    const fingerprint = cancellationFingerprint(state?.status || {});
+    return fingerprint && this.cancelledStateAcknowledgements.get(printerId) !== fingerprint
+      ? fingerprint
+      : null;
+  }
+
   getBedClearance() {
     const pending = new Map();
     for (const job of this.jobs) {
       if (!job.bedClearanceRequired || job.bedClearedAt) continue;
       const existing = pending.get(job.printerId);
       if (!existing || new Date(job.finishedAt || job.updatedAt || 0).getTime() > new Date(existing.finishedAt || existing.updatedAt || 0).getTime()) {
-        pending.set(job.printerId, job);
+        pending.set(job.printerId, {
+          printerId:job.printerId,
+          printerName:this.fleetState.getPrinterState(job.printerId)?.name || job.printerName,
+          jobId:job.id,
+          fileName:job.fileName,
+          jobStatus:job.status,
+          finishedAt:job.finishedAt || job.updatedAt || null
+        });
       }
     }
-    return [...pending.values()].map((job) => ({
-      printerId: job.printerId,
-      printerName: this.fleetState.getPrinterState(job.printerId)?.name || job.printerName,
-      jobId: job.id,
-      fileName: job.fileName,
-      jobStatus: job.status,
-      finishedAt: job.finishedAt || job.updatedAt || null
-    }));
+    for (const state of this.fleetState.getFleet()) {
+      if (pending.has(state.id) || !this.cancelledStateNeedsClearance(state.id)) continue;
+      pending.set(state.id, {
+        printerId:state.id,
+        printerName:state.name,
+        jobId:null,
+        fileName:state.status?.fileName || 'Cancelled print',
+        jobStatus:'cancelled',
+        finishedAt:null
+      });
+    }
+    return [...pending.values()];
   }
 
   requiresBedClearance(printerId) {
-    return this.jobs.some((job) => job.printerId === printerId && job.bedClearanceRequired === true && !job.bedClearedAt);
+    return this.jobs.some((job) => job.printerId === printerId && job.bedClearanceRequired === true && !job.bedClearedAt)
+      || Boolean(this.cancelledStateNeedsClearance(printerId));
   }
 
   async clearBed(printerId) {
     const pending = this.jobs.filter((job) => job.printerId === printerId && job.bedClearanceRequired === true && !job.bedClearedAt);
-    if (!pending.length) throw new Error('This printer is not waiting for bed clearance');
+    const cancellation = this.cancelledStateNeedsClearance(printerId);
+    if (!pending.length && !cancellation) throw new Error('This printer is not waiting for bed clearance');
     const clearedAt = nowIso();
     for (const job of pending) {
       job.bedClearedAt = clearedAt;
       job.updatedAt = clearedAt;
     }
-    await this.persistAndNotify();
+    if (cancellation) this.cancelledStateAcknowledgements.set(printerId, cancellation);
+    if (pending.length) await this.persistAndNotify();
+    else this.notify();
     this.scheduleReconcile();
     return { printerId, clearedAt, clearedJobs: pending.map((job) => job.id) };
   }
@@ -661,6 +700,11 @@ export class PrintQueueService {
     let changed = false;
     try {
       const fleet = new Map(this.fleetState.getFleet().map((state) => [state.id, state]));
+      for (const [printerId, acknowledged] of this.cancelledStateAcknowledgements) {
+        if (cancellationFingerprint(fleet.get(printerId)?.status || {}) !== acknowledged) {
+          this.cancelledStateAcknowledgements.delete(printerId);
+        }
+      }
       for (const job of this.jobs) {
         if (job.status !== 'starting' && job.status !== 'printing') continue;
         const state = fleet.get(job.printerId);
