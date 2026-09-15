@@ -955,3 +955,34 @@ test('automatic scheduling prefers a compatible printer where the file already e
   service.stop();
 });
 
+test('production batches keep one editable priority across waiting copies', async () => {
+  const fleetState = new FakeFleetState([]);
+  const staged = {
+    id:'88888888-8888-4888-8888-888888888888',
+    fileName:'batch-priority.gcode',
+    filePath:'/staged/batch-priority.gcode',
+    size:20,
+    sha256:'e'.repeat(64),
+    stagedAt:new Date().toISOString(),
+    requirements:{ requiredTools:[], toolCount:0, usageReliable:true, logicalTools:[], materialMetadata:{ metadataAvailable:false, materials:[] } }
+  };
+  const service = new PrintQueueService({
+    fleetState,
+    chamberPreheat:{ isActive:() => false, stop:async () => {} },
+    getPrinterFn:async () => null,
+    adapterResolver:() => ({ capabilities:{} }),
+    loadJobsFn:async () => [],
+    saveJobsFn:async () => {},
+    getQueueFileFn:async () => staged,
+    pruneQueueFilesFn:async () => 0
+  });
+  await service.start();
+  const first = await service.add({ assignmentMode:'automatic', stagedFileId:staged.id, quantity:3, priority:'low' });
+  assert.ok(first.productionBatchId);
+  assert.deepEqual(service.jobs.filter((job) => job.productionBatchId === first.productionBatchId).map((job) => job.priority), ['low','low','low']);
+  const batch = await service.setProductionPriority(first.productionBatchId, 'high');
+  assert.equal(batch.priority, 'high');
+  assert.deepEqual(service.jobs.filter((job) => job.productionBatchId === first.productionBatchId).map((job) => job.priority), ['high','high','high']);
+  service.stop();
+});
+
