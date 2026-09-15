@@ -7,7 +7,7 @@
 - Repository: `Andy-Knight/AI-Coding`
 - Project path: `print-farm-controller/`
 - Branch: `main`
-- Current application version: **0.12.11**
+- Current application version: **0.12.12**
 - Runtime: **Node.js 20+**, ES modules, no npm runtime dependencies.
 - GitHub is the authoritative code baseline.
 
@@ -96,15 +96,16 @@ Manufacturer-specific discovery, capabilities, limits, status normalization, fil
 - v0.12.5 regression suite: **121 passing tests, 0 failures**.
 - **v0.12.6 Snapmaker RGB toolhead layout:** U1 toolhead status keeps the hexadecimal colour on the metadata line and renders `RGB(r, g, b)` on a separate line to prevent overflow; print setup and material preflight retain combined hex + RGB text.
 - **v0.12.7 FlashForge RGB colour display:** controller-assigned FlashForge filament colours now show the stored `#RRGGBB` value plus `RGB(r, g, b)` in Toolhead status; queue compatibility semantics are unchanged.
+- **v0.12.12 new-job progress isolation:** retained filename and 100% telemetry are ignored while a queued job is starting; an active matching print state must confirm the new run before its progress is recorded, including same-file reprints.
 - **v0.12.11 FlashForge cancellation display:** a latched raw `CANCEL` state displays as Cancelled while clearance is pending and Ready after acknowledgement; raw status remains available in printer detail diagnostics.
 - **v0.12.10 FlashForge cancellation queue fix:** persistent `CANCEL`/cancelled/stopped states and retained filenames are handled as terminal only after a bed-clearance acknowledgement; untracked external cancellations also create the clearance interlock.
 - **v0.12.9 Snapmaker completed-print queue fix:** explicit idle/complete printer state now takes precedence over Moonraker's retained previous filename, while the independent bed-clearance interlock remains enforced.
 - **v0.12.8 native Snapmaker filament colour editing:** manually assigned third-party U1 filament colours can be changed from each toolhead card using stock `SET_PRINT_FILAMENT_CONFIG`; writes are idle/loaded/editable-only and verified against `print_task_config.filament_color_rgba`. Official RFID filament remains colour-locked.
-- v0.12.11 regression suite: **130 passing tests, 0 failures**.
+- v0.12.12 regression suite: **131 passing tests, 0 failures**.
 
 ## Current task
 
-**v0.12.11 FlashForge cancellation recovery and controller-facing state display are complete in code and automated tests.** Real-hardware validation should confirm the card changes from Cancelled to Ready after bed clearance while the printer continues reporting raw `CANCEL`.
+**v0.12.12 queued-job progress isolation is complete in code and automated tests.** Real-hardware validation should confirm a newly assigned job shows Starting at 0%, then tracks the new run after the printer reports it active.
 
 ## Next steps
 
