@@ -1,4 +1,6 @@
-# Printer Fleet Controller v0.12.10
+# Printer Fleet Controller v0.12.11
+
+> v0.12.11 presents FlashForge's latched `CANCEL` result as **Cancelled** while bed clearance is pending and **Ready** after acknowledgement. The raw printer status remains visible in the printer detail diagnostics and is not altered or reset on the printer.
 
 > v0.12.10 fixes FlashForge queue recovery when the printer retains `CANCEL` and the cancelled filename. Cancelled states now create or retain a bed-clearance interlock, then become startable only after the operator confirms the bed is clear. This also covers prints cancelled outside the controller.
 
