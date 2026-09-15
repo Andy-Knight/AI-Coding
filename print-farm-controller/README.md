@@ -1,4 +1,6 @@
-# Printer Fleet Controller v0.12.11
+# Printer Fleet Controller v0.12.12
+
+> v0.12.12 prevents a newly assigned queue job from inheriting the previous print's retained 100% progress. A job remains **Starting — 0%** until an active printer state confirms the new print, including when the same filename is reprinted; progress is then tracked only from the confirmed new run.
 
 > v0.12.11 presents FlashForge's latched `CANCEL` result as **Cancelled** while bed clearance is pending and **Ready** after acknowledgement. The raw printer status remains visible in the printer detail diagnostics and is not altered or reset on the printer.
 
