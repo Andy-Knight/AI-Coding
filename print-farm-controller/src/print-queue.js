@@ -303,7 +303,13 @@ export class PrintQueueService {
   }
 
   getSnapshot() {
-    const jobs = this.jobs.map((job) => {
+    const positions = new Map(this.jobs.map((job, index) => [job.id, index]));
+    const orderedQueued = this.jobs
+      .filter((job) => job.status === 'queued')
+      .sort((left, right) => compareQueuePriority(left, right, positions));
+    let queuedIndex = 0;
+    const orderedJobs = this.jobs.map((job) => job.status === 'queued' ? orderedQueued[queuedIndex++] : job);
+    const jobs = orderedJobs.map((job) => {
       const currentName = this.fleetState.getPrinterState(job.printerId)?.name;
       return publicJob(currentName ? { ...job, printerName: currentName } : job);
     });
