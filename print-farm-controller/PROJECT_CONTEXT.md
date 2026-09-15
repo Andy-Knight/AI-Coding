@@ -4,7 +4,7 @@
 
 ## Source of truth
 
-- Repository: `Andy-Knight/AI-Coding`
+- Repository: `Andy-Knight/Print-Farm-Controller`
 - Project path: `print-farm-controller/`
 - Branch: `main`
 - Current application version: **0.12.13**
