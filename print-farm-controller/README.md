@@ -1,4 +1,6 @@
-# Printer Fleet Controller v0.12.12
+# Printer Fleet Controller v0.12.13
+
+> v0.12.13 adds an accessible **Light / Dark** appearance switch in the main header. The selected theme is saved in the browser; before a choice is made, the interface follows the device colour-scheme preference.
 
 > v0.12.12 prevents a newly assigned queue job from inheriting the previous print's retained 100% progress. A job remains **Starting — 0%** until an active printer state confirms the new print, including when the same filename is reprinted; progress is then tracked only from the confirmed new run.
 
@@ -69,6 +71,7 @@ http://<controller-computer-ip>:4242
 - Automatic bounded LAN discovery for Snapmaker U1 / compatible U1 Moonraker instances.
 - Add/remove printers and persistently rename the controller display name without changing printer-side identity.
 - Persistent drag-and-drop dashboard ordering.
+- Accessible light/dark appearance switch with browser persistence and automatic device-theme default.
 - Live backend polling with SSE updates.
 - Online/offline state, progress, layers, temperatures, ETA, and diagnostics.
 - Backend camera proxy with shared MJPEG streams and cached dashboard snapshots.
