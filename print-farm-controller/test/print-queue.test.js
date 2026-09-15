@@ -277,6 +277,44 @@ test('completed queued print blocks the next job until bed clearance is confirme
   service.stop();
 });
 
+test('FlashForge CANCEL state requires clearance then permits the next queued job despite a stale filename', async () => {
+  const fleetState = new FakeFleetState([{
+    id:'ff',
+    name:'AD5M Pro',
+    online:true,
+    status:{ status:'CANCEL', fileName:'cancelled-print.gcode', progress:42 }
+  }]);
+  const store = memoryStore();
+  const starts = [];
+  const service = new PrintQueueService({
+    fleetState,
+    chamberPreheat:{ isActive:() => false, stop:async () => {} },
+    getPrinterFn:async () => ({ id:'ff', name:'AD5M Pro', adapterType:'flashforge-ad5m' }),
+    adapterResolver:() => ({
+      capabilities:{ printLocalFile:true },
+      getStatus:async () => fleetState.getPrinterState('ff').status,
+      printLocalFile:async (fileName) => starts.push(fileName)
+    }),
+    loadJobsFn:store.load,
+    saveJobsFn:store.save
+  });
+
+  await service.start();
+  const next = await service.add({ printerId:'ff', fileName:'next-print.gcode' });
+  await new Promise((resolve) => setTimeout(resolve, 30));
+
+  assert.equal(service.getJob(next.id).status, 'queued');
+  assert.deepEqual(starts, []);
+  assert.equal(service.getSnapshot().awaitingClearance, 1);
+  assert.equal(service.getSnapshot().bedClearance[0].fileName, 'cancelled-print.gcode');
+
+  await service.clearBed('ff');
+  await waitFor(() => starts.length === 1);
+  assert.deepEqual(starts, ['next-print.gcode']);
+  assert.equal(service.getSnapshot().awaitingClearance, 0);
+  service.stop();
+});
+
 test('bed-clearance interlock survives restart and cannot be erased by clearing history', async () => {
   const pending = {
     id:'done-1', printerId:'p1', printerName:'Printer', fileName:'finished.gcode', status:'completed',
