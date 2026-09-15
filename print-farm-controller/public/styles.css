@@ -368,3 +368,210 @@ input:focus,select:focus { border-color:#7a9fbe; }
 .production-quantity-control { display:flex; align-items:center; gap:6px; font-size:.82rem; }
 .production-quantity-control input { width:76px; }
 @media (max-width:760px) { .production-run { flex-direction:column; gap:2px; } .production-run span:last-child { text-align:left; } }
+
+
+/* Persistent light/dark appearance */
+:root { color-scheme:dark; }
+:root[data-theme="light"] { color-scheme:light; color:#17212b; background:#eef3f7; }
+
+.theme-toggle {
+  display:inline-flex;
+  align-items:center;
+  gap:8px;
+  min-height:40px;
+  border:1px solid #2d3943;
+  border-radius:999px;
+  padding:7px 11px 7px 8px;
+  background:#151d24;
+  color:#dce4eb;
+  font-weight:800;
+}
+.theme-toggle-track {
+  position:relative;
+  width:36px;
+  height:20px;
+  flex:0 0 auto;
+  border-radius:999px;
+  background:#34424e;
+  transition:background .2s ease;
+}
+.theme-toggle-track::after {
+  content:"";
+  position:absolute;
+  top:3px;
+  left:3px;
+  width:14px;
+  height:14px;
+  border-radius:50%;
+  background:#ffffff;
+  box-shadow:0 1px 4px rgba(0,0,0,.35);
+  transition:transform .2s ease;
+}
+.theme-toggle[aria-checked="true"] .theme-toggle-track { background:#4f8fc2; }
+.theme-toggle[aria-checked="true"] .theme-toggle-track::after { transform:translateX(16px); }
+.theme-toggle:focus-visible { outline:2px solid #80bfff; outline-offset:2px; }
+.theme-toggle-label { min-width:34px; text-align:left; font-size:.78rem; }
+
+:root[data-theme="light"] body {
+  background:radial-gradient(circle at 10% 0%, #ffffff 0, #eef3f7 32rem);
+}
+:root[data-theme="light"] .summary-card,
+:root[data-theme="light"] .card,
+:root[data-theme="light"] dialog,
+:root[data-theme="light"] .batch-toolbar {
+  background:#ffffff;
+  color:#17212b;
+  border-color:#cad5de;
+  box-shadow:0 16px 38px rgba(31,48,61,.10);
+}
+:root[data-theme="light"] .metric,
+:root[data-theme="light"] .panel,
+:root[data-theme="light"] .discovery-panel,
+:root[data-theme="light"] .distribution-options .checkbox-label,
+:root[data-theme="light"] .material-tool,
+:root[data-theme="light"] .tool-map-row,
+:root[data-theme="light"] .u1-print-options,
+:root[data-theme="light"] .tool-offset-calibration,
+:root[data-theme="light"] .queue-job,
+:root[data-theme="light"] .queue-assignment-card {
+  background:#f6f9fb;
+  border-color:#d5dee5;
+  color:#17212b;
+}
+:root[data-theme="light"] input,
+:root[data-theme="light"] select,
+:root[data-theme="light"] .tool-map-picker summary,
+:root[data-theme="light"] .tool-map-menu,
+:root[data-theme="light"] .calibration-clean-tool,
+:root[data-theme="light"] .calibration-tool,
+:root[data-theme="light"] .reorder-button,
+:root[data-theme="light"] .drag-handle,
+:root[data-theme="light"] .printer-select span {
+  background:#ffffff;
+  color:#17212b;
+  border-color:#bdcbd6;
+}
+:root[data-theme="light"] .discovery-result,
+:root[data-theme="light"] .tool-map-option {
+  background:#f3f7fa;
+  border-color:#d5dee5;
+  color:#17212b;
+}
+:root[data-theme="light"] .tool-map-option:hover,
+:root[data-theme="light"] .tool-map-option:focus-visible,
+:root[data-theme="light"] .tool-map-option.selected {
+  background:#e8f1f8;
+  border-color:#7ca8c9;
+}
+:root[data-theme="light"] .secondary,
+:root[data-theme="light"] .icon {
+  background:#e4ebf0;
+  color:#17212b;
+}
+:root[data-theme="light"] .primary {
+  background:#183f62;
+  color:#ffffff;
+}
+:root[data-theme="light"] .theme-toggle {
+  background:#ffffff;
+  border-color:#bdcbd6;
+  color:#263746;
+}
+:root[data-theme="light"] .theme-toggle-track { background:#9aabb8; }
+:root[data-theme="light"] .progress { background:#dce5eb; }
+:root[data-theme="light"] .badge { background:#e2eaf0; color:#354858; }
+:root[data-theme="light"] .subtle,
+:root[data-theme="light"] .eyebrow,
+:root[data-theme="light"] label,
+:root[data-theme="light"] .field-help,
+:root[data-theme="light"] .field-inline-help,
+:root[data-theme="light"] .health-line,
+:root[data-theme="light"] .detail-health,
+:root[data-theme="light"] .serial-line,
+:root[data-theme="light"] .discovery-empty,
+:root[data-theme="light"] .form-divider,
+:root[data-theme="light"] .job-meta,
+:root[data-theme="light"] .material-summary,
+:root[data-theme="light"] .material-tool > span,
+:root[data-theme="light"] .material-tool > small,
+:root[data-theme="light"] .tool-map-choice-text small,
+:root[data-theme="light"] .tool-map-file span,
+:root[data-theme="light"] .queue-job-meta,
+:root[data-theme="light"] .queue-job-printer,
+:root[data-theme="light"] .controller-footer {
+  color:#5e7281;
+}
+:root[data-theme="light"] .metric span,
+:root[data-theme="light"] .diagnostics-panel span { color:#607585; }
+:root[data-theme="light"] .metric b,
+:root[data-theme="light"] .job-meta b,
+:root[data-theme="light"] .sensor-readout b,
+:root[data-theme="light"] .material-tool > b,
+:root[data-theme="light"] .tool-map-choice-text strong {
+  color:#1c2a35;
+}
+:root[data-theme="light"] .form-divider::before,
+:root[data-theme="light"] .form-divider::after { background:#d5dee5; }
+:root[data-theme="light"] .file,
+:root[data-theme="light"] .diagnostics-panel > div { border-color:#dce4ea; }
+:root[data-theme="light"] .empty {
+  color:#5e7281;
+  border-color:#aebdca;
+}
+:root[data-theme="light"] .queue-empty {
+  color:#607585;
+  border-color:#aebdca;
+}
+:root[data-theme="light"] .queue-compatibility {
+  background:#eaf2f7;
+  color:#526a7b;
+}
+:root[data-theme="light"] .queue-compatibility b { color:#293d4c; }
+:root[data-theme="light"] .queue-job-needs_review,
+:root[data-theme="light"] .queue-job-clearance {
+  background:#fff8e8;
+  border-color:#d9b969;
+}
+:root[data-theme="light"] .queue-job-clearance-note { color:#795b12; }
+:root[data-theme="light"] .file-warning {
+  background:#fff8e8;
+  border-color:#d9b969;
+  color:#71550f;
+}
+:root[data-theme="light"] .preheat-strip,
+:root[data-theme="light"] .bed-clearance-strip {
+  background:#fff7e5;
+  color:#6c5010;
+  border-color:#d9b969;
+}
+:root[data-theme="light"] .preheat-status {
+  color:#526a7b;
+  border-color:#d5dee5;
+}
+:root[data-theme="light"] .preheat-status.active {
+  background:#fff7e5;
+  color:#6c5010;
+  border-color:#d9b969;
+}
+:root[data-theme="light"] .error,
+:root[data-theme="light"] .queue-status.failed {
+  background:#fdebed;
+  color:#9f2933;
+}
+:root[data-theme="light"] .danger {
+  background:#f8dfe2;
+  color:#922b35;
+}
+:root[data-theme="light"] .material-tool.filament-missing {
+  background:#fff3f4;
+  border-color:#d7a8ad;
+}
+:root[data-theme="light"] .material-swatch.unknown {
+  background:repeating-linear-gradient(45deg,#d9e2e8,#d9e2e8 4px,#f4f7f9 4px,#f4f7f9 8px);
+  border-color:#aebdca;
+}
+
+@media (max-width:760px) {
+  .theme-toggle-label { display:none; }
+  .theme-toggle { padding:7px 8px; }
+}

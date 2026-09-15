@@ -4,6 +4,21 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Printer Fleet Controller</title>
+  <meta id="themeColorMeta" name="theme-color" content="#0c1015" />
+  <script>
+    (() => {
+      try {
+        const saved = localStorage.getItem('printer-fleet-theme');
+        const theme = saved === 'light' || saved === 'dark'
+          ? saved
+          : (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+        document.documentElement.dataset.theme = theme;
+        document.querySelector('#themeColorMeta')?.setAttribute('content', theme === 'light' ? '#eef3f7' : '#0c1015');
+      } catch {
+        document.documentElement.dataset.theme = 'dark';
+      }
+    })();
+  </script>
   <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
@@ -16,6 +31,10 @@
       </div>
     </div>
     <div class="topbar-actions">
+      <button id="themeToggle" class="theme-toggle" type="button" role="switch" aria-checked="true" aria-label="Switch to light mode">
+        <span class="theme-toggle-track" aria-hidden="true"></span>
+        <span class="theme-toggle-label">Dark</span>
+      </button>
       <button id="queueBtn" class="secondary">Queue &amp; history <span id="queueButtonCount" class="queue-button-count hidden">0</span></button>
       <button id="batchModeBtn" class="secondary">Fleet operations</button>
       <button id="addPrinterBtn" class="primary">+ Add printer</button>

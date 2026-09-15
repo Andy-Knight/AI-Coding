@@ -84,6 +84,44 @@ test('queued print starts on an idle printer and records completion', async () =
   service.stop();
 });
 
+test('reprinting the same filename ignores retained idle 100 percent until the new print becomes active', async () => {
+  const fleetState = new FakeFleetState([{
+    id:'p1',
+    online:true,
+    status:{ status:'idle', fileName:'repeat.gcode', progress:100 }
+  }]);
+  const store = memoryStore();
+  const starts = [];
+  const service = new PrintQueueService({
+    fleetState,
+    chamberPreheat:{ isActive:() => false, stop:async () => {} },
+    getPrinterFn:async () => ({ id:'p1', name:'Printer' }),
+    adapterResolver:() => ({
+      capabilities:{ printLocalFile:true },
+      getStatus:async () => fleetState.getPrinterState('p1').status,
+      printLocalFile:async (fileName) => starts.push(fileName)
+    }),
+    loadJobsFn:store.load,
+    saveJobsFn:store.save
+  });
+
+  await service.start();
+  const job = await service.add({ printerId:'p1', fileName:'repeat.gcode' });
+  await waitFor(() => starts.length === 1);
+  await new Promise((resolve) => setTimeout(resolve, 30));
+
+  assert.equal(service.getJob(job.id).status, 'starting');
+  assert.equal(service.getJob(job.id).maxProgress, 0);
+
+  fleetState.setState('p1', {
+    online:true,
+    status:{ status:'printing', fileName:'repeat.gcode', progress:4 }
+  });
+  await waitFor(() => service.getJob(job.id).status === 'printing');
+  assert.equal(service.getJob(job.id).maxProgress, 4);
+  service.stop();
+});
+
 test('printer busy with a manual print blocks queue progression', async () => {
   const fleetState = new FakeFleetState([{ id:'p1', online:true, status:{ status:'printing', fileName:'manual.gcode', progress:50 } }]);
   const store = memoryStore();

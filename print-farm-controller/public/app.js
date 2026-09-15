@@ -36,6 +36,8 @@ const queueAddForm = document.querySelector('#queueAddForm');
 const queueAddFileInput = document.querySelector('#queueAddFileInput');
 const queueAddStatus = document.querySelector('#queueAddStatus');
 const queueAddError = document.querySelector('#queueAddError');
+const themeToggle = document.querySelector('#themeToggle');
+const themeColorMeta = document.querySelector('#themeColorMeta');
 
 let fleet = [];
 let adapters = [];
@@ -50,6 +52,43 @@ let batchBusy = false;
 let pendingBatchAction = null;
 const selectedPrinterIds = new Set();
 const toolOffsetActionLocks = new Map();
+
+const THEME_STORAGE_KEY = 'printer-fleet-theme';
+const themeMedia = window.matchMedia('(prefers-color-scheme: light)');
+
+function savedTheme() {
+  try {
+    const value = localStorage.getItem(THEME_STORAGE_KEY);
+    return value === 'light' || value === 'dark' ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function applyTheme(theme, { persist = false } = {}) {
+  const next = theme === 'light' ? 'light' : 'dark';
+  document.documentElement.dataset.theme = next;
+  document.documentElement.style.colorScheme = next;
+  themeColorMeta?.setAttribute('content', next === 'light' ? '#eef3f7' : '#0c1015');
+  if (themeToggle) {
+    const dark = next === 'dark';
+    themeToggle.setAttribute('aria-checked', String(dark));
+    themeToggle.setAttribute('aria-label', `Switch to ${dark ? 'light' : 'dark'} mode`);
+    const label = themeToggle.querySelector('.theme-toggle-label');
+    if (label) label.textContent = dark ? 'Dark' : 'Light';
+  }
+  if (persist) {
+    try { localStorage.setItem(THEME_STORAGE_KEY, next); } catch {}
+  }
+}
+
+applyTheme(document.documentElement.dataset.theme || (themeMedia.matches ? 'light' : 'dark'));
+themeToggle?.addEventListener('click', () => {
+  applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark', { persist:true });
+});
+themeMedia.addEventListener('change', (event) => {
+  if (!savedTheme()) applyTheme(event.matches ? 'light' : 'dark');
+});
 
 const cameraSnapshotRefreshMs = 5000;
 const cameraSnapshotRetryMs = 7000;
