@@ -1,4 +1,6 @@
-# Printer Fleet Controller v0.12.9
+# Printer Fleet Controller v0.12.10
+
+> v0.12.10 fixes FlashForge queue recovery when the printer retains `CANCEL` and the cancelled filename. Cancelled states now create or retain a bed-clearance interlock, then become startable only after the operator confirms the bed is clear. This also covers prints cancelled outside the controller.
 
 > v0.12.9 fixes Snapmaker U1 queue availability after a completed print. Moonraker may retain the previous filename after reporting an idle/complete state; the queue now treats the explicit idle state as authoritative while continuing to enforce the separate bed-clearance interlock.
 
