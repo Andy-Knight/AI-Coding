@@ -2,7 +2,7 @@ import path from 'node:path';
 import { canonicalMaterial } from './file-material-metadata.js';
 
 const ACTIVE_STATES = new Set(['printing', 'working', 'building_from_sd', 'pause', 'paused']);
-const IDLE_STATES = new Set(['idle', 'ready', 'standby', 'complete', 'completed']);
+const IDLE_STATES = new Set(['idle', 'ready', 'standby', 'complete', 'completed', 'cancel', 'cancelled', 'canceled', 'stopped']);
 
 function normState(value) {
   return String(value || '').trim().toLowerCase();
@@ -10,8 +10,8 @@ function normState(value) {
 
 function isBusy(status = {}) {
   const state = normState(status.status);
-  // Moonraker may retain the previous filename after a completed print.
-  // An explicit terminal/idle state is authoritative over that stale field.
+  // Moonraker and FlashForge may retain the previous filename after a print
+  // completes or is cancelled. An explicit terminal/idle state is authoritative.
   if (IDLE_STATES.has(state)) return false;
   if (status.fileName) return true;
   if (ACTIVE_STATES.has(state)) return true;
