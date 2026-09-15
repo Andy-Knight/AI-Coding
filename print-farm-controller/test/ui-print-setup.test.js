@@ -278,7 +278,7 @@ test('finished production batches can be reprinted from recent history', () => {
   assert.match(app, /Reprint batch/);
   assert.match(app, /Reprint all \${batch\.quantity} copies/);
   assert.match(app, /production\/\$\{encodeURIComponent\(batchId\)\}\/reprint/);
-  assert.match(server, /pause\|resume\|cancel\|quantity\|reprint/);
+  assert.match(server, /pause\|resume\|cancel\|quantity\|priority\|reprint/);
   assert.match(queue, /async reprintProduction/);
   assert.match(queue, /Production batch must be finished before it can be reprinted/);
 });
