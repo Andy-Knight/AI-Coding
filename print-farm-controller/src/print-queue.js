@@ -713,12 +713,16 @@ export class PrintQueueService {
         const stateName = normalizeState(printerStatus.status);
         job.lastPrinterState = stateName || null;
         const progress = Number(printerStatus.progress || 0);
-        if (Number.isFinite(progress)) job.maxProgress = Math.max(Number(job.maxProgress || 0), progress);
 
         if (job.status === 'starting') {
-          if (matchesFile(printerStatus, job.fileName) || (printIsActive(printerStatus) && !printerStatus.fileName)) {
+          // Do not associate retained filename/progress telemetry with the new
+          // job until the printer reports an active print state. This is
+          // especially important when reprinting the same filename.
+          const active = printIsActive(printerStatus);
+          if (active && (!printerStatus.fileName || matchesFile(printerStatus, job.fileName))) {
             job.status = 'printing';
             job.startedAt = job.startedAt || nowIso();
+            job.maxProgress = Number.isFinite(progress) && progress >= 0 && progress < 100 ? progress : 0;
             job.updatedAt = nowIso();
             changed = true;
           } else if (job.startRequestedAt && nowMs() - new Date(job.startRequestedAt).getTime() > this.startTimeoutMs) {
@@ -727,6 +731,8 @@ export class PrintQueueService {
           }
           continue;
         }
+
+        if (Number.isFinite(progress)) job.maxProgress = Math.max(Number(job.maxProgress || 0), progress);
 
         if (['cancel', 'cancelled', 'canceled', 'stopped'].includes(stateName)) {
           this.markTerminal(job, 'cancelled', null, { requireBedClearance: true });
@@ -954,6 +960,7 @@ export class PrintQueueService {
       }
       job.status = 'starting';
       job.startRequestedAt = nowIso();
+      job.maxProgress = 0;
       job.updatedAt = nowIso();
       await this.persistAndNotify();
       await adapter.printLocalFile(job.fileName, sanitizeOptions(job.options));
@@ -1037,6 +1044,7 @@ export class PrintQueueService {
 
       job.status = 'starting';
       job.startRequestedAt = nowIso();
+      job.maxProgress = 0;
       job.updatedAt = nowIso();
       job.error = null;
       await this.persistAndNotify();
