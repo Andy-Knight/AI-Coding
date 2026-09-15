@@ -10,6 +10,13 @@ test('completed Snapmaker status ignores Moonraker stale filename during compati
   assert.equal(queueCompatibilityHelpers.isBusy({ ...staleCompletedStatus, status:'printing' }), true);
 });
 
+test('FlashForge CANCEL state ignores retained filename after operator-safe terminal handling', () => {
+  const staleCancelledStatus = { status:'CANCEL', fileName:'cancelled-print.gcode', progress:42 };
+  assert.equal(queueCompatibilityHelpers.isBusy(staleCancelledStatus), false);
+  assert.equal(queueCompatibilityHelpers.isBusy({ ...staleCancelledStatus, status:'cancelled' }), false);
+  assert.equal(queueCompatibilityHelpers.isBusy({ ...staleCancelledStatus, status:'printing' }), true);
+});
+
 const stagedJob = {
   stagedFile:{ id:'x', requirements:{
     requiredTools:[0,1], toolCount:2, usageReliable:true,
